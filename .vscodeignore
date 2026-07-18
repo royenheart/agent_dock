@@ -1,7 +1,10 @@
 .vscode/**
 src/**
+test/**
 .gitignore
 tsconfig.json
 node_modules/**
 *.map
 docs/**
+.omo/**
+.codegraph

@@ -54,12 +54,27 @@
           "markdownDescription": "远程服务器列表。每项: `{ name, host, user?, port? }`。host 可以是 ~/.ssh/config 里的别名。",
           "items": {
             "type": "object",
-            "required": ["name", "host"],
+            "required": [
+              "name",
+              "host"
+            ],
             "properties": {
-              "name": { "type": "string", "description": "显示名称" },
-              "host": { "type": "string", "description": "SSH 主机或别名" },
-              "user": { "type": "string", "description": "SSH 用户名" },
-              "port": { "type": "number", "description": "SSH 端口（默认 22）" }
+              "name": {
+                "type": "string",
+                "description": "显示名称"
+              },
+              "host": {
+                "type": "string",
+                "description": "SSH 主机或别名"
+              },
+              "user": {
+                "type": "string",
+                "description": "SSH 用户名"
+              },
+              "port": {
+                "type": "number",
+                "description": "SSH 端口（默认 22）"
+              }
             }
           }
         },
@@ -78,28 +93,103 @@
       }
     },
     "commands": [
-      { "command": "agentWorkspace.refresh", "title": "Refresh", "category": "Agent Workspace", "icon": "$(refresh)" },
-      { "command": "agentWorkspace.addServer", "title": "Add Server", "category": "Agent Workspace", "icon": "$(add)" },
-      { "command": "agentWorkspace.removeServer", "title": "Remove Server", "category": "Agent Workspace", "icon": "$(trash)" },
-      { "command": "agentWorkspace.connect", "title": "Connect to This Server", "category": "Agent Workspace", "icon": "$(remote)" },
-      { "command": "agentWorkspace.connectTerminal", "title": "Open SSH Terminal", "category": "Agent Workspace", "icon": "$(terminal)" },
-      { "command": "agentWorkspace.openSession", "title": "Open Transcript", "category": "Agent Workspace" },
-      { "command": "agentWorkspace.resumeSession", "title": "Resume in Terminal", "category": "Agent Workspace", "icon": "$(debug-continue)" },
-      { "command": "agentWorkspace.copySessionId", "title": "Copy Session ID", "category": "Agent Workspace" },
-      { "command": "agentWorkspace.openSettings", "title": "Open Agent Settings", "category": "Agent Workspace", "icon": "$(gear)" }
+      {
+        "command": "agentWorkspace.refresh",
+        "title": "Refresh",
+        "category": "Agent Workspace",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "agentWorkspace.addServer",
+        "title": "Add Server",
+        "category": "Agent Workspace",
+        "icon": "$(add)"
+      },
+      {
+        "command": "agentWorkspace.removeServer",
+        "title": "Remove Server",
+        "category": "Agent Workspace",
+        "icon": "$(trash)"
+      },
+      {
+        "command": "agentWorkspace.connect",
+        "title": "Connect to This Server",
+        "category": "Agent Workspace",
+        "icon": "$(remote)"
+      },
+      {
+        "command": "agentWorkspace.connectTerminal",
+        "title": "Open SSH Terminal",
+        "category": "Agent Workspace",
+        "icon": "$(terminal)"
+      },
+      {
+        "command": "agentWorkspace.openSession",
+        "title": "Open Transcript",
+        "category": "Agent Workspace"
+      },
+      {
+        "command": "agentWorkspace.resumeSession",
+        "title": "Resume in Terminal",
+        "category": "Agent Workspace",
+        "icon": "$(debug-continue)"
+      },
+      {
+        "command": "agentWorkspace.copySessionId",
+        "title": "Copy Session ID",
+        "category": "Agent Workspace"
+      },
+      {
+        "command": "agentWorkspace.openSettings",
+        "title": "Open Agent Settings",
+        "category": "Agent Workspace",
+        "icon": "$(gear)"
+      }
     ],
     "menus": {
       "view/title": [
-        { "command": "agentWorkspace.refresh", "when": "view == agentWorkspace.workspace", "group": "navigation@1" },
-        { "command": "agentWorkspace.addServer", "when": "view == agentWorkspace.workspace", "group": "navigation@2" }
+        {
+          "command": "agentWorkspace.refresh",
+          "when": "view == agentWorkspace.workspace",
+          "group": "navigation@1"
+        },
+        {
+          "command": "agentWorkspace.addServer",
+          "when": "view == agentWorkspace.workspace",
+          "group": "navigation@2"
+        }
       ],
       "view/item/context": [
-        { "command": "agentWorkspace.connect", "when": "view == agentWorkspace.workspace && viewItem == server.remote", "group": "1_connection@1" },
-        { "command": "agentWorkspace.connectTerminal", "when": "view == agentWorkspace.workspace && viewItem == server.remote", "group": "1_connection@2" },
-        { "command": "agentWorkspace.removeServer", "when": "view == agentWorkspace.workspace && viewItem == server.remote", "group": "2_manage@1" },
-        { "command": "agentWorkspace.resumeSession", "when": "view == agentWorkspace.workspace && viewItem == session", "group": "1_session@1" },
-        { "command": "agentWorkspace.openSession", "when": "view == agentWorkspace.workspace && viewItem == session", "group": "1_session@2" },
-        { "command": "agentWorkspace.copySessionId", "when": "view == agentWorkspace.workspace && viewItem == session", "group": "2_session@1" }
+        {
+          "command": "agentWorkspace.connect",
+          "when": "view == agentWorkspace.workspace && viewItem == server.remote",
+          "group": "1_connection@1"
+        },
+        {
+          "command": "agentWorkspace.connectTerminal",
+          "when": "view == agentWorkspace.workspace && viewItem == server.remote",
+          "group": "1_connection@2"
+        },
+        {
+          "command": "agentWorkspace.removeServer",
+          "when": "view == agentWorkspace.workspace && viewItem == server.remote",
+          "group": "2_manage@1"
+        },
+        {
+          "command": "agentWorkspace.resumeSession",
+          "when": "view == agentWorkspace.workspace && viewItem == session",
+          "group": "1_session@1"
+        },
+        {
+          "command": "agentWorkspace.openSession",
+          "when": "view == agentWorkspace.workspace && viewItem == session",
+          "group": "1_session@2"
+        },
+        {
+          "command": "agentWorkspace.copySessionId",
+          "when": "view == agentWorkspace.workspace && viewItem == session",
+          "group": "2_session@1"
+        }
       ]
     }
   },
@@ -111,6 +201,7 @@
   "devDependencies": {
     "@types/node": "^22.10.0",
     "@types/vscode": "^1.96.0",
+    "@vscode/vsce": "^3.9.2",
     "typescript": "^5.7.0"
   }
 }
