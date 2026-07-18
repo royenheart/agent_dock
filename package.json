@@ -13,10 +13,99 @@
   ],
   "activationEvents": [],
   "main": "./out/extension.js",
+  "contributes": {
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "agentWorkspace",
+          "title": "Agent Workspace",
+          "icon": "media/icon.svg"
+        }
+      ]
+    },
+    "views": {
+      "agentWorkspace": [
+        {
+          "id": "agentWorkspace.workspace",
+          "name": "Workspace",
+          "icon": "media/icon.svg",
+          "contextualTitle": "Agent Workspace"
+        },
+        {
+          "id": "agentWorkspace.settings",
+          "name": "Agent Settings",
+          "type": "webview",
+          "icon": "media/icon.svg"
+        }
+      ]
+    },
+    "viewsWelcome": [
+      {
+        "view": "agentWorkspace.workspace",
+        "contents": "展开「当前」节点查看本机/当前服务器的文件与 agent 会话。\n[添加远程服务器](command:agentWorkspace.addServer) 后，无需切换窗口即可浏览其他服务器的 opencode / Codex / Claude Code 会话。"
+      }
+    ],
+    "configuration": {
+      "title": "Agent Workspace",
+      "properties": {
+        "agentWorkspace.servers": {
+          "type": "array",
+          "default": [],
+          "markdownDescription": "远程服务器列表。每项: `{ name, host, user?, port? }`。host 可以是 ~/.ssh/config 里的别名。",
+          "items": {
+            "type": "object",
+            "required": ["name", "host"],
+            "properties": {
+              "name": { "type": "string", "description": "显示名称" },
+              "host": { "type": "string", "description": "SSH 主机或别名" },
+              "user": { "type": "string", "description": "SSH 用户名" },
+              "port": { "type": "number", "description": "SSH 端口（默认 22）" }
+            }
+          }
+        },
+        "agentWorkspace.sessionLimit": {
+          "type": "number",
+          "default": 100,
+          "minimum": 10,
+          "maximum": 1000,
+          "description": "每台服务器每个 agent 最多扫描的会话数（按最近修改排序）"
+        },
+        "agentWorkspace.connectInNewWindow": {
+          "type": "boolean",
+          "default": false,
+          "description": "Connect 命令在新窗口中打开远程服务器（默认复用当前窗口）"
+        }
+      }
+    },
+    "commands": [
+      { "command": "agentWorkspace.refresh", "title": "Refresh", "category": "Agent Workspace", "icon": "$(refresh)" },
+      { "command": "agentWorkspace.addServer", "title": "Add Server", "category": "Agent Workspace", "icon": "$(add)" },
+      { "command": "agentWorkspace.removeServer", "title": "Remove Server", "category": "Agent Workspace", "icon": "$(trash)" },
+      { "command": "agentWorkspace.connect", "title": "Connect to This Server", "category": "Agent Workspace", "icon": "$(remote)" },
+      { "command": "agentWorkspace.connectTerminal", "title": "Open SSH Terminal", "category": "Agent Workspace", "icon": "$(terminal)" },
+      { "command": "agentWorkspace.openSession", "title": "Open Transcript", "category": "Agent Workspace" },
+      { "command": "agentWorkspace.resumeSession", "title": "Resume in Terminal", "category": "Agent Workspace", "icon": "$(debug-continue)" },
+      { "command": "agentWorkspace.copySessionId", "title": "Copy Session ID", "category": "Agent Workspace" },
+      { "command": "agentWorkspace.openSettings", "title": "Open Agent Settings", "category": "Agent Workspace", "icon": "$(gear)" }
+    ],
+    "menus": {
+      "view/title": [
+        { "command": "agentWorkspace.refresh", "when": "view == agentWorkspace.workspace", "group": "navigation@1" },
+        { "command": "agentWorkspace.addServer", "when": "view == agentWorkspace.workspace", "group": "navigation@2" }
+      ],
+      "view/item/context": [
+        { "command": "agentWorkspace.connect", "when": "view == agentWorkspace.workspace && viewItem == server.remote", "group": "1_connection@1" },
+        { "command": "agentWorkspace.connectTerminal", "when": "view == agentWorkspace.workspace && viewItem == server.remote", "group": "1_connection@2" },
+        { "command": "agentWorkspace.removeServer", "when": "view == agentWorkspace.workspace && viewItem == server.remote", "group": "2_manage@1" },
+        { "command": "agentWorkspace.resumeSession", "when": "view == agentWorkspace.workspace && viewItem == session", "group": "1_session@1" },
+        { "command": "agentWorkspace.openSession", "when": "view == agentWorkspace.workspace && viewItem == session", "group": "1_session@2" },
+        { "command": "agentWorkspace.copySessionId", "when": "view == agentWorkspace.workspace && viewItem == session", "group": "2_session@1" }
+      ]
+    }
+  },
   "scripts": {
     "compile": "tsc -p ./",
     "watch": "tsc -watch -p ./",
-    "lint": "eslint src --ext ts",
     "vscode:prepublish": "npm run compile"
   },
   "devDependencies": {
