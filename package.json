@@ -1,0 +1,27 @@
+{
+  "name": "agent-workspace",
+  "displayName": "Agent Workspace",
+  "description": "Unified workspace view: files of the current server plus AI agent sessions (opencode, Codex CLI, Claude Code) across multiple SSH servers.",
+  "version": "0.0.1",
+  "publisher": "royenheart",
+  "license": "MIT",
+  "engines": {
+    "vscode": "^1.96.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "activationEvents": [],
+  "main": "./out/extension.js",
+  "scripts": {
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./",
+    "lint": "eslint src --ext ts",
+    "vscode:prepublish": "npm run compile"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "@types/vscode": "^1.96.0",
+    "typescript": "^5.7.0"
+  }
+}
