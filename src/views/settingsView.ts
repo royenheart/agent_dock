@@ -60,11 +60,11 @@ export class SettingsViewProvider implements vscode.WebviewViewProvider {
   .tab { padding: 3px 10px; border-radius: 10px; cursor: pointer;
          background: var(--vscode-button-secondaryBackground); }
   .tab.active { background: var(--vscode-button-background); color: var(--vscode-button-foreground); }
+  .section { margin: 10px 0 4px; font-weight: 600; color: var(--vscode-descriptionForeground);
+             border-bottom: 1px solid var(--vscode-panel-border); padding-bottom: 2px; }
   .item { padding: 6px 8px; border-radius: 4px; margin-bottom: 4px; background: var(--vscode-editor-inactiveSelectionBackground); }
   .item:hover { outline: 1px solid var(--vscode-focusBorder); cursor: pointer; }
   .name { font-weight: 600; word-break: break-all; }
-  .badge { font-size: 10px; padding: 1px 6px; border-radius: 8px; margin-left: 6px;
-           background: var(--vscode-badge-background); color: var(--vscode-badge-foreground); }
   .detail { color: var(--vscode-descriptionForeground); margin-top: 2px; word-break: break-all; }
   .note { color: var(--vscode-descriptionForeground); font-style: italic; margin: 12px 4px; }
 </style>
@@ -76,10 +76,11 @@ export class SettingsViewProvider implements vscode.WebviewViewProvider {
 <script nonce="${nonce}">
   const vscode = acquireVsCodeApi();
   const data = ${payload};
-  const TABS = [['mcps','MCPs'],['skills','Skills'],['plugins','Plugins'],['hooks','Hooks']];
-  let active = 'mcps';
-  const AGENT_NAME = { opencode: 'opencode', codex: 'codex', claude: 'claude' };
+  const TABS = [['claude','Claude Code'],['codex','Codex'],['opencode','opencode']];
+  const SECTIONS = [['mcps','MCPs'],['skills','Skills'],['plugins','Plugins'],['hooks','Hooks']];
+  let active = 'claude';
   function esc(s) { const d = document.createElement('div'); d.textContent = s ?? ''; return d.innerHTML; }
+  function total(b) { return SECTIONS.reduce((n, [k]) => n + ((b && b[k]) ? b[k].length : 0), 0); }
   function render() {
     if (!data) { document.getElementById('content').innerHTML = '<div class="note">加载中…</div>'; return; }
     document.getElementById('server').textContent = '当前服务器: ' + data.serverLabel;
@@ -88,24 +89,39 @@ export class SettingsViewProvider implements vscode.WebviewViewProvider {
     for (const [key, label] of TABS) {
       const t = document.createElement('span');
       t.className = 'tab' + (key === active ? ' active' : '');
-      t.textContent = label + ' (' + (data[key] ? data[key].length : 0) + ')';
+      t.textContent = label + ' (' + total(data.byAgent ? data.byAgent[key] : null) + ')';
       t.onclick = () => { active = key; render(); };
       tabsEl.appendChild(t);
     }
-    const items = data[active] || [];
     const c = document.getElementById('content');
-    if (!items.length) {
-      c.innerHTML = '<div class="note">当前服务器暂无此项配置</div>' + (data.notes || []).map(n => '<div class="note">' + esc(n) + '</div>').join('');
-      return;
-    }
     c.innerHTML = '';
-    for (const it of items) {
-      const div = document.createElement('div');
-      div.className = 'item';
-      div.innerHTML = '<span class="name">' + esc(it.name) + '</span><span class="badge">' + esc(AGENT_NAME[it.agent] || it.agent) + '</span>'
-        + (it.detail ? '<div class="detail">' + esc(it.detail) + '</div>' : '');
-      if (it.sourcePath) div.onclick = () => vscode.postMessage({ type: 'openFile', path: it.sourcePath });
-      c.appendChild(div);
+    const bucket = data.byAgent ? data.byAgent[active] : null;
+    let shown = 0;
+    if (bucket) {
+      for (const [key, label] of SECTIONS) {
+        const items = bucket[key] || [];
+        if (!items.length) { continue; }
+        shown += items.length;
+        const h = document.createElement('div');
+        h.className = 'section';
+        h.textContent = label + ' (' + items.length + ')';
+        c.appendChild(h);
+        for (const it of items) {
+          const div = document.createElement('div');
+          div.className = 'item';
+          div.innerHTML = '<span class="name">' + esc(it.name) + '</span>'
+            + (it.detail ? '<div class="detail">' + esc(it.detail) + '</div>' : '');
+          if (it.sourcePath) {
+            div.title = it.sourcePath;
+            div.onclick = () => vscode.postMessage({ type: 'openFile', path: it.sourcePath });
+          }
+          c.appendChild(div);
+        }
+      }
+    }
+    if (!shown) {
+      c.innerHTML = '<div class="note">该 agent 在当前服务器暂无配置</div>'
+        + (data.notes || []).map(n => '<div class="note">' + esc(n) + '</div>').join('');
     }
   }
   document.getElementById('refresh').onclick = () => vscode.postMessage({ type: 'refresh' });

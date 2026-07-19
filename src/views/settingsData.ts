@@ -10,13 +10,23 @@ export interface SettingsItem {
   sourcePath?: string;
 }
 
-export interface SettingsData {
-  serverLabel: string;
+export interface AgentBucket {
   mcps: SettingsItem[];
   skills: SettingsItem[];
   plugins: SettingsItem[];
   hooks: SettingsItem[];
+}
+
+export interface SettingsData {
+  serverLabel: string;
+  byAgent: Record<AgentKind, AgentBucket>;
   notes: string[];
+}
+
+const AGENTS: AgentKind[] = ['claude', 'codex', 'opencode'];
+
+function emptyBucket(): AgentBucket {
+  return { mcps: [], skills: [], plugins: [], hooks: [] };
 }
 
 async function readJson(file: string): Promise<Record<string, unknown> | undefined> {
@@ -83,73 +93,104 @@ function tomlBodyDetail(body: string): string | undefined {
   return enabled ? `enabled=${enabled[1]}` : undefined;
 }
 
+/**
+ * skill 目录 → 能读到它的 agent 集合。
+ * ~/.claude/skills 会被 opencode 兼容读取；~/.agents/skills 是跨 agent 共享约定。
+ */
+const SKILL_ROOTS: { rel: string; agents: AgentKind[] }[] = [
+  { rel: '.claude/skills', agents: ['claude', 'opencode'] },
+  { rel: '.codex/skills', agents: ['codex'] },
+  { rel: '.config/opencode/skills', agents: ['opencode'] },
+  { rel: '.config/opencode/skill', agents: ['opencode'] },
+  { rel: '.agents/skills', agents: ['claude', 'opencode', 'codex'] },
+];
+
 async function gatherSkills(home: string): Promise<SettingsItem[]> {
-  const roots: { dir: string; agent: AgentKind }[] = [
-    { dir: path.join(home, '.claude', 'skills'), agent: 'claude' },
-    { dir: path.join(home, '.codex', 'skills'), agent: 'codex' },
-    { dir: path.join(home, '.config', 'opencode', 'skills'), agent: 'opencode' },
-    { dir: path.join(home, '.config', 'opencode', 'skill'), agent: 'opencode' },
-    { dir: path.join(home, '.agents', 'skills'), agent: 'claude' },
-  ];
-  const seen = new Set<string>();
-  const out: SettingsItem[] = [];
-  for (const { dir, agent } of roots) {
+  interface Acc {
+    item: SettingsItem;
+    paths: string[];
+  }
+  const byAgentAndName = new Map<string, Acc>();
+  for (const root of SKILL_ROOTS) {
+    const dir = path.join(home, root.rel);
     for (const name of await listDirs(dir)) {
-      if (seen.has(`${agent}:${name}`)) {
-        continue;
-      }
       const skillMd = path.join(dir, name, 'SKILL.md');
       let detail: string | undefined;
       try {
         const raw = await fs.readFile(skillMd, 'utf8');
         const fm = /^---\r?\n([\s\S]*?)\r?\n---/.exec(raw);
         if (fm) {
-          const desc = /^description:\s*(.+)$/m.exec(fm[1]);
-          detail = desc?.[1]?.trim().slice(0, 120);
+          detail = /^description:\s*(.+)$/m.exec(fm[1])?.[1]?.trim().slice(0, 100);
         }
-        seen.add(`${agent}:${name}`);
-        out.push({ name, detail, agent, sourcePath: skillMd });
       } catch {
-        // 无 SKILL.md —— 不是 skill 目录
+        continue;
+      }
+      for (const agent of root.agents) {
+        const key = `${agent}:${name}`;
+        const acc = byAgentAndName.get(key);
+        if (acc) {
+          acc.paths.push(skillMd);
+        } else {
+          byAgentAndName.set(key, {
+            item: { name, detail, agent, sourcePath: skillMd },
+            paths: [skillMd],
+          });
+        }
       }
     }
   }
+  const out: SettingsItem[] = [];
+  for (const { item, paths } of byAgentAndName.values()) {
+    if (paths.length > 1) {
+      item.detail = `${item.detail ?? ''}（共 ${paths.length} 个安装位置）`.trim();
+    }
+    out.push(item);
+  }
+  out.sort((a, b) => a.name.localeCompare(b.name));
   return out;
 }
 
 export async function gatherSettings(serverLabel: string): Promise<SettingsData> {
   const home = os.homedir();
-  const data: SettingsData = { serverLabel, mcps: [], skills: [], plugins: [], hooks: [], notes: [] };
+  const byAgent: Record<AgentKind, AgentBucket> = {
+    claude: emptyBucket(),
+    codex: emptyBucket(),
+    opencode: emptyBucket(),
+  };
+  const data: SettingsData = { serverLabel, byAgent, notes: [] };
 
-  const claudeJson = await readJson(path.join(home, '.claude.json'));
-  const claudeMcp = (claudeJson?.mcpServers ?? {}) as Record<string, unknown>;
-  for (const [name, cfg] of Object.entries(claudeMcp)) {
+  // ---- claude code ----
+  const claudeJsonPath = path.join(home, '.claude.json');
+  const claudeJson = await readJson(claudeJsonPath);
+  for (const [name, cfg] of Object.entries((claudeJson?.mcpServers ?? {}) as Record<string, unknown>)) {
     const c = cfg as Record<string, unknown>;
-    data.mcps.push({
+    byAgent.claude.mcps.push({
       name,
       detail: brief(c.command) ?? brief(c.url) ?? brief(c.type),
       agent: 'claude',
-      sourcePath: path.join(home, '.claude.json'),
+      sourcePath: claudeJsonPath,
     });
   }
-  const claudeSettings = await readJson(path.join(home, '.claude', 'settings.json'));
+  const claudeSettingsPath = path.join(home, '.claude', 'settings.json');
+  const claudeSettings = await readJson(claudeSettingsPath);
   const enabledPlugins = (claudeSettings?.enabledPlugins ?? {}) as Record<string, unknown>;
-  for (const name of Object.keys(enabledPlugins)) {
-    if (enabledPlugins[name]) {
-      data.plugins.push({ name, agent: 'claude', sourcePath: path.join(home, '.claude', 'settings.json') });
+  for (const [name, on] of Object.entries(enabledPlugins)) {
+    if (on) {
+      byAgent.claude.plugins.push({ name, agent: 'claude', sourcePath: claudeSettingsPath });
     }
   }
   const claudeHooks = (claudeSettings?.hooks ?? {}) as Record<string, unknown>;
   for (const [event, handlers] of Object.entries(claudeHooks)) {
     const count = Array.isArray(handlers) ? handlers.length : 1;
-    data.hooks.push({
+    byAgent.claude.hooks.push({
       name: event,
       detail: `${count} 个处理器`,
       agent: 'claude',
-      sourcePath: path.join(home, '.claude', 'settings.json'),
+      sourcePath: claudeSettingsPath,
     });
   }
 
+  // ---- codex ----
   const codexTomlPath = path.join(home, '.codex', 'config.toml');
   let codexToml = '';
   try {
@@ -159,39 +200,39 @@ export async function gatherSettings(serverLabel: string): Promise<SettingsData>
   }
   if (codexToml) {
     for (const s of parseTomlSections(codexToml, 'mcp_servers')) {
-      data.mcps.push({ name: s.name, detail: tomlBodyDetail(s.body), agent: 'codex', sourcePath: codexTomlPath });
+      byAgent.codex.mcps.push({ name: s.name, detail: tomlBodyDetail(s.body), agent: 'codex', sourcePath: codexTomlPath });
     }
     for (const s of parseTomlSections(codexToml, 'plugins')) {
-      data.plugins.push({ name: s.name, detail: tomlBodyDetail(s.body), agent: 'codex', sourcePath: codexTomlPath });
+      byAgent.codex.plugins.push({ name: s.name, detail: tomlBodyDetail(s.body), agent: 'codex', sourcePath: codexTomlPath });
     }
     if (/^\[hooks\]/m.test(codexToml)) {
-      data.hooks.push({ name: 'config.toml [hooks]', agent: 'codex', sourcePath: codexTomlPath });
+      byAgent.codex.hooks.push({ name: 'config.toml [hooks]', agent: 'codex', sourcePath: codexTomlPath });
     }
   }
-  const codexHooks = await readJson(path.join(home, '.codex', 'hooks.json'));
+  const codexHooksPath = path.join(home, '.codex', 'hooks.json');
+  const codexHooks = await readJson(codexHooksPath);
   if (codexHooks) {
     for (const name of Object.keys(codexHooks)) {
-      data.hooks.push({ name, agent: 'codex', sourcePath: path.join(home, '.codex', 'hooks.json') });
+      byAgent.codex.hooks.push({ name, agent: 'codex', sourcePath: codexHooksPath });
     }
   }
 
+  // ---- opencode ----
   const ocConfigDir = path.join(home, '.config', 'opencode');
-  const ocJson =
-    (await readJson(path.join(ocConfigDir, 'opencode.json'))) ?? (await readJson(path.join(ocConfigDir, 'config.json')));
   const ocJsonPath = path.join(ocConfigDir, 'opencode.json');
-  const ocMcp = (ocJson?.mcp ?? {}) as Record<string, unknown>;
-  for (const [name, cfg] of Object.entries(ocMcp)) {
+  const ocJson = (await readJson(ocJsonPath)) ?? (await readJson(path.join(ocConfigDir, 'config.json')));
+  for (const [name, cfg] of Object.entries((ocJson?.mcp ?? {}) as Record<string, unknown>)) {
     const c = cfg as Record<string, unknown>;
     const cmd = Array.isArray(c.command) ? (c.command as unknown[]).join(' ') : brief(c.url);
-    data.mcps.push({ name, detail: cmd ?? brief(c.type), agent: 'opencode', sourcePath: ocJsonPath });
+    byAgent.opencode.mcps.push({ name, detail: cmd ?? brief(c.type), agent: 'opencode', sourcePath: ocJsonPath });
   }
   const ocPluginList = Array.isArray(ocJson?.plugin) ? (ocJson.plugin as unknown[]) : [];
   for (const p of ocPluginList) {
-    data.plugins.push({ name: String(p), detail: 'npm 包', agent: 'opencode', sourcePath: ocJsonPath });
+    byAgent.opencode.plugins.push({ name: String(p), detail: 'npm 包', agent: 'opencode', sourcePath: ocJsonPath });
   }
   const ocPluginFiles = await listFiles(path.join(ocConfigDir, 'plugins'), ['.js', '.ts']);
   for (const file of ocPluginFiles) {
-    data.plugins.push({
+    byAgent.opencode.plugins.push({
       name: file,
       detail: '本地插件文件',
       agent: 'opencode',
@@ -199,7 +240,7 @@ export async function gatherSettings(serverLabel: string): Promise<SettingsData>
     });
   }
   if (ocPluginList.length > 0 || ocPluginFiles.length > 0) {
-    data.hooks.push({
+    byAgent.opencode.hooks.push({
       name: 'opencode hooks 由插件实现',
       detail: '无独立 hooks 配置文件，事件在插件中订阅',
       agent: 'opencode',
@@ -207,9 +248,17 @@ export async function gatherSettings(serverLabel: string): Promise<SettingsData>
     });
   }
 
-  data.skills = await gatherSkills(home);
+  // ---- skills（跨位置去重，按 agent 分行）----
+  for (const item of await gatherSkills(home)) {
+    byAgent[item.agent].skills.push(item);
+  }
 
-  if (data.mcps.length + data.skills.length + data.plugins.length + data.hooks.length === 0) {
+  const total = AGENTS.reduce(
+    (n, a) =>
+      n + byAgent[a].mcps.length + byAgent[a].skills.length + byAgent[a].plugins.length + byAgent[a].hooks.length,
+    0,
+  );
+  if (total === 0) {
     data.notes.push('在当前服务器上未找到任何 agent 配置（MCP / Skills / Plugins / Hooks）');
   }
   return data;

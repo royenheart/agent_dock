@@ -24,6 +24,14 @@
       ]
     },
     "views": {
+      "explorer": [
+        {
+          "id": "agentWorkspace.workspaceExplorer",
+          "name": "Agent Workspace",
+          "icon": "media/icon.svg",
+          "contextualTitle": "Agent Workspace"
+        }
+      ],
       "agentWorkspace": [
         {
           "id": "agentWorkspace.workspace",
@@ -42,6 +50,10 @@
     "viewsWelcome": [
       {
         "view": "agentWorkspace.workspace",
+        "contents": "展开「当前」节点查看本机/当前服务器的文件与 agent 会话。\n[添加远程服务器](command:agentWorkspace.addServer) 后，无需切换窗口即可浏览其他服务器的 opencode / Codex / Claude Code 会话。"
+      },
+      {
+        "view": "agentWorkspace.workspaceExplorer",
         "contents": "展开「当前」节点查看本机/当前服务器的文件与 agent 会话。\n[添加远程服务器](command:agentWorkspace.addServer) 后，无需切换窗口即可浏览其他服务器的 opencode / Codex / Claude Code 会话。"
       }
     ],
@@ -150,44 +162,44 @@
       "view/title": [
         {
           "command": "agentWorkspace.refresh",
-          "when": "view == agentWorkspace.workspace",
+          "when": "view =~ /^agentWorkspace.workspace/",
           "group": "navigation@1"
         },
         {
           "command": "agentWorkspace.addServer",
-          "when": "view == agentWorkspace.workspace",
+          "when": "view =~ /^agentWorkspace.workspace/",
           "group": "navigation@2"
         }
       ],
       "view/item/context": [
         {
           "command": "agentWorkspace.connect",
-          "when": "view == agentWorkspace.workspace && viewItem == server.remote",
+          "when": "view =~ /^agentWorkspace.workspace/ && viewItem == server.remote",
           "group": "1_connection@1"
         },
         {
           "command": "agentWorkspace.connectTerminal",
-          "when": "view == agentWorkspace.workspace && viewItem == server.remote",
+          "when": "view =~ /^agentWorkspace.workspace/ && viewItem == server.remote",
           "group": "1_connection@2"
         },
         {
           "command": "agentWorkspace.removeServer",
-          "when": "view == agentWorkspace.workspace && viewItem == server.remote",
+          "when": "view =~ /^agentWorkspace.workspace/ && viewItem == server.remote",
           "group": "2_manage@1"
         },
         {
           "command": "agentWorkspace.resumeSession",
-          "when": "view == agentWorkspace.workspace && viewItem == session",
+          "when": "view =~ /^agentWorkspace.workspace/ && viewItem == session",
           "group": "1_session@1"
         },
         {
           "command": "agentWorkspace.openSession",
-          "when": "view == agentWorkspace.workspace && viewItem == session",
+          "when": "view =~ /^agentWorkspace.workspace/ && viewItem == session",
           "group": "1_session@2"
         },
         {
           "command": "agentWorkspace.copySessionId",
-          "when": "view == agentWorkspace.workspace && viewItem == session",
+          "when": "view =~ /^agentWorkspace.workspace/ && viewItem == session",
           "group": "2_session@1"
         }
       ]
