@@ -15,5 +15,14 @@
   "cmd.resumeSession": "Resume in Terminal",
   "cmd.copySessionId": "Copy Session ID",
   "cmd.openSettings": "Open Agent Settings",
-  "welcome.content": "Expand the current server to browse its files and agent sessions.\n[Add a remote server](command:agentWorkspace.addServer) to browse opencode / Codex / Claude Code sessions on other machines without switching windows."
+  "welcome.content": "Expand the current server to browse its files and agent sessions.\n[Add a remote server](command:agentWorkspace.addServer) to browse opencode / Codex / Claude Code sessions on other machines without switching windows.",
+  "cmd.fsOpenSide": "Open to the Side",
+  "cmd.fsCopyPath": "Copy Path",
+  "cmd.fsCopyRelativePath": "Copy Relative Path",
+  "cmd.fsRevealOS": "Reveal in File Manager",
+  "cmd.fsNewFile": "New File…",
+  "cmd.fsNewFolder": "New Folder…",
+  "cmd.fsRename": "Rename…",
+  "cmd.fsDelete": "Delete",
+  "cmd.fsOpenTerminal": "Open in Integrated Terminal"
 }

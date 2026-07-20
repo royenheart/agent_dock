@@ -26,6 +26,41 @@ const DEFAULT_STRINGS: TranscriptStrings = {
 
 type ToolBlock = Extract<RenderBlock, { kind: 'tool' }>;
 
+export interface TranscriptSummary {
+  model?: string;
+  input?: number;
+  output?: number;
+  cacheRead?: number;
+  cacheWrite?: number;
+  cost?: number;
+}
+
+export interface TranscriptResult {
+  blocks: RenderBlock[];
+  summary: TranscriptSummary;
+}
+
+export function formatTokens(n: number): string {
+  if (n < 1000) {
+    return String(n);
+  }
+  if (n < 1_000_000) {
+    return `${(n / 1000).toFixed(1)}k`;
+  }
+  return `${(n / 1_000_000).toFixed(2)}M`;
+}
+
+function addUsage(acc: TranscriptSummary | undefined, u: { input?: number; output?: number; cacheRead?: number; cacheWrite?: number; cost?: number }): void {
+  if (!acc) {
+    return;
+  }
+  acc.input = (acc.input ?? 0) + (u.input ?? 0);
+  acc.output = (acc.output ?? 0) + (u.output ?? 0);
+  acc.cacheRead = (acc.cacheRead ?? 0) + (u.cacheRead ?? 0);
+  acc.cacheWrite = (acc.cacheWrite ?? 0) + (u.cacheWrite ?? 0);
+  acc.cost = (acc.cost ?? 0) + (u.cost ?? 0);
+}
+
 function truncate(text: string, max: number): string {
   return text.length > max ? `${text.slice(0, max)}\n… (truncated)` : text;
 }
@@ -100,7 +135,11 @@ function pushTodoItems(out: RenderBlock[], raw: unknown, ts?: number): void {
 
 // ---------------- claude ----------------
 
-export function renderClaudeTranscript(jsonl: string, strings: TranscriptStrings = DEFAULT_STRINGS): RenderBlock[] {
+export function renderClaudeTranscript(
+  jsonl: string,
+  strings: TranscriptStrings = DEFAULT_STRINGS,
+  acc?: TranscriptSummary,
+): RenderBlock[] {
   const out: RenderBlock[] = [];
   const pendingTools = new Map<string, ToolBlock>();
   for (const d of jsonLines(jsonl)) {
@@ -142,13 +181,43 @@ export function renderClaudeTranscript(jsonl: string, strings: TranscriptStrings
       if (!Array.isArray(content)) {
         continue;
       }
+      const usage = msg?.usage as Record<string, unknown> | undefined;
+      const model = typeof msg?.model === 'string' ? msg.model : undefined;
+      let usageMeta: string | undefined;
+      if (usage && typeof usage.input_tokens === 'number') {
+        if (acc) {
+          acc.model = model ?? acc.model;
+          addUsage(acc, {
+            input: usage.input_tokens as number,
+            output: (usage.output_tokens as number) ?? 0,
+            cacheRead: (usage.cache_read_input_tokens as number) ?? 0,
+            cacheWrite: (usage.cache_creation_input_tokens as number) ?? 0,
+          });
+        }
+        usageMeta = [
+          model,
+          `in ${formatTokens(usage.input_tokens as number)}`,
+          `out ${formatTokens((usage.output_tokens as number) ?? 0)}`,
+          (usage.cache_read_input_tokens as number) > 0 ? `cache ${formatTokens(usage.cache_read_input_tokens as number)}` : '',
+        ]
+          .filter(Boolean)
+          .join(' · ');
+      }
+      let firstText = true;
       for (const raw of content) {
         if (!raw || typeof raw !== 'object') {
           continue;
         }
         const b = raw as Record<string, unknown>;
         if (b.type === 'text' && typeof b.text === 'string' && b.text.trim()) {
-          out.push({ kind: 'text', role: 'assistant', markdown: truncate(b.text, MAX_TEXT), ts });
+          out.push({
+            kind: 'text',
+            role: 'assistant',
+            markdown: truncate(b.text, MAX_TEXT),
+            meta: firstText ? usageMeta : undefined,
+            ts,
+          });
+          firstText = false;
         } else if (b.type === 'thinking' && typeof b.thinking === 'string' && b.thinking.trim()) {
           out.push({ kind: 'thinking', text: truncate(b.thinking, MAX_TEXT), ts });
         } else if (b.type === 'redacted_thinking') {
@@ -195,16 +264,28 @@ function functionOutputText(output: unknown): string {
   return brief(output, TOOL_INPUT_PREVIEW);
 }
 
-export function renderCodexTranscript(jsonl: string, strings: TranscriptStrings = DEFAULT_STRINGS): RenderBlock[] {
+export function renderCodexTranscript(
+  jsonl: string,
+  strings: TranscriptStrings = DEFAULT_STRINGS,
+  acc?: TranscriptSummary,
+): RenderBlock[] {
   void strings;
   const out: RenderBlock[] = [];
   const pendingTools = new Map<string, ToolBlock>();
   for (const d of jsonLines(jsonl)) {
     const p = d.payload as Record<string, unknown> | undefined;
+    const ts = tsOf(d.timestamp) ?? tsOf(p?.timestamp);
+    if (acc && d.type === 'session_meta') {
+      const meta = p ?? d;
+      if (typeof meta.model_provider === 'string') {
+        acc.model = meta.model_provider;
+      }
+    } else if (acc && !p && typeof d.model_provider === 'string') {
+      acc.model = d.model_provider as string;
+    }
     if (!p) {
       continue;
     }
-    const ts = tsOf(d.timestamp) ?? tsOf(p.timestamp);
     if (d.type === 'response_item') {
       if (p.type === 'message' && (p.role === 'user' || p.role === 'assistant')) {
         const text = textFromContent(p.content).trim();
@@ -276,6 +357,22 @@ export function renderCodexTranscript(jsonl: string, strings: TranscriptStrings 
         }
       } else if (p.type === 'plan_update') {
         pushTodoItems(out, p.plan, ts);
+      } else if (p.type === 'token_count') {
+        const info = p.info as Record<string, unknown> | undefined;
+        const last = info?.last_token_usage as Record<string, unknown> | undefined;
+        const total = info?.total_token_usage as Record<string, unknown> | undefined;
+        if (last && typeof last.input_tokens === 'number') {
+          out.push({
+            kind: 'usage',
+            label: `tokens · in ${formatTokens(last.input_tokens as number)} · out ${formatTokens((last.output_tokens as number) ?? 0)} · cached ${formatTokens((last.cached_input_tokens as number) ?? 0)}`,
+            ts,
+          });
+        }
+        if (acc && total && typeof total.input_tokens === 'number') {
+          acc.input = total.input_tokens as number;
+          acc.output = (total.output_tokens as number) ?? 0;
+          acc.cacheRead = (total.cached_input_tokens as number) ?? 0;
+        }
       } else if (p.type === 'patch_apply_end') {
         const changes = p.changes as Record<string, unknown> | undefined;
         const files = changes ? Object.keys(changes) : [];
@@ -295,6 +392,7 @@ interface OpencodeDump {
   parts?: [string, string][];
   todos?: [string, unknown, unknown][];
   v2?: [string, string][];
+  session?: Record<string, unknown> | null;
 }
 
 function splitTranscriptSections(stdout: string): Map<string, string> {
@@ -338,7 +436,11 @@ function renderOpencodeToolPart(part: Record<string, unknown>, ts: number | unde
   };
 }
 
-export function renderOpencodeTranscript(stdout: string, strings: TranscriptStrings = DEFAULT_STRINGS): RenderBlock[] {
+export function renderOpencodeTranscript(
+  stdout: string,
+  strings: TranscriptStrings = DEFAULT_STRINGS,
+  acc?: TranscriptSummary,
+): RenderBlock[] {
   const sections = splitTranscriptSections(stdout);
   let dump: OpencodeDump = {};
   const jsonSection = sections.get('json');
@@ -372,6 +474,24 @@ export function renderOpencodeTranscript(stdout: string, strings: TranscriptStri
     }
   }
 
+  if (acc && dump.session) {
+    const s = dump.session;
+    const model = s.model as Record<string, unknown> | undefined;
+    if (typeof s.agent === 'string' && s.agent) {
+      acc.model = s.agent;
+    }
+    if (model && typeof model.id === 'string') {
+      acc.model = model.providerID ? `${String(model.providerID)}/${model.id}` : model.id;
+    }
+    acc.input = (s.tokens_input as number) ?? 0;
+    acc.output = (s.tokens_output as number) ?? 0;
+    acc.cacheRead = (s.tokens_cache_read as number) ?? 0;
+    acc.cacheWrite = (s.tokens_cache_write as number) ?? 0;
+    if (typeof s.cost === 'number') {
+      acc.cost = s.cost;
+    }
+  }
+
   const out: RenderBlock[] = [];
   const partsByMessage = new Map<string, Record<string, unknown>[]>();
   for (const [messageId, dataStr] of dump.parts ?? []) {
@@ -402,6 +522,17 @@ export function renderOpencodeTranscript(stdout: string, strings: TranscriptStri
         out.push({ kind: 'thinking', text: truncate(part.text, MAX_TEXT), ts });
       } else if (part.type === 'tool') {
         out.push(renderOpencodeToolPart(part, ts));
+      } else if (part.type === 'step-finish') {
+        const tokens = part.tokens as Record<string, unknown> | undefined;
+        if (tokens && typeof tokens.input === 'number') {
+          const cache = tokens.cache as Record<string, unknown> | undefined;
+          const cost = typeof part.cost === 'number' ? ` · $${(part.cost as number).toFixed(4)}` : '';
+          out.push({
+            kind: 'usage',
+            label: `step tokens · in ${formatTokens(tokens.input as number)} · out ${formatTokens((tokens.output as number) ?? 0)} · cache ${formatTokens((cache?.read as number) ?? 0)}${cost}`,
+            ts,
+          });
+        }
       } else if (part.type === 'patch' && Array.isArray(part.files) && part.files.length > 0) {
         out.push({ kind: 'files', label: strings.filesChanged, files: part.files.map(String), ts });
       } else if (part.type === 'file' && typeof part.filename === 'string') {
@@ -474,15 +605,18 @@ export function renderTranscript(
   session: AgentSession,
   stdout: string,
   strings: TranscriptStrings = DEFAULT_STRINGS,
-): RenderBlock[] {
+): TranscriptResult {
+  const summary: TranscriptSummary = {};
   if (session.agent === 'opencode') {
-    return renderOpencodeTranscript(stdout, strings);
+    return { blocks: renderOpencodeTranscript(stdout, strings, summary), summary };
   }
   const { body, truncated } = stripLeadMarker(stdout);
   const blocks =
-    session.agent === 'claude' ? renderClaudeTranscript(body, strings) : renderCodexTranscript(body, strings);
+    session.agent === 'claude'
+      ? renderClaudeTranscript(body, strings, summary)
+      : renderCodexTranscript(body, strings, summary);
   if (truncated) {
     blocks.unshift({ kind: 'notice', text: strings.truncatedNotice });
   }
-  return blocks;
+  return { blocks, summary };
 }

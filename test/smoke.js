@@ -43,7 +43,7 @@ function fmt(ms) {
     if (!s) continue;
     const tscript = buildTranscriptScript(s);
     const tres = await execLocal(tscript, 60_000);
-    const blocks = renderTranscript(s, tres.stdout);
+    const blocks = renderTranscript(s, tres.stdout).blocks;
     const kinds = {};
     for (const b of blocks) kinds[b.kind] = (kinds[b.kind] || 0) + 1;
     console.log(`\n=== transcript ${agent} "${s.title.slice(0, 40)}" → ${blocks.length} blocks`, kinds, '===');

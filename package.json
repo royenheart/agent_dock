@@ -159,6 +159,60 @@
         "title": "%cmd.openSettings%",
         "category": "Agent Workspace",
         "icon": "$(gear)"
+      },
+      {
+        "command": "agentWorkspace.fsOpenSide",
+        "title": "%cmd.fsOpenSide%",
+        "category": "Agent Workspace",
+        "icon": "$(go-to-file)"
+      },
+      {
+        "command": "agentWorkspace.fsCopyPath",
+        "title": "%cmd.fsCopyPath%",
+        "category": "Agent Workspace",
+        "icon": "$(clippy)"
+      },
+      {
+        "command": "agentWorkspace.fsCopyRelativePath",
+        "title": "%cmd.fsCopyRelativePath%",
+        "category": "Agent Workspace",
+        "icon": "$(clippy)"
+      },
+      {
+        "command": "agentWorkspace.fsRevealOS",
+        "title": "%cmd.fsRevealOS%",
+        "category": "Agent Workspace",
+        "icon": "$(folder-opened)"
+      },
+      {
+        "command": "agentWorkspace.fsNewFile",
+        "title": "%cmd.fsNewFile%",
+        "category": "Agent Workspace",
+        "icon": "$(new-file)"
+      },
+      {
+        "command": "agentWorkspace.fsNewFolder",
+        "title": "%cmd.fsNewFolder%",
+        "category": "Agent Workspace",
+        "icon": "$(new-folder)"
+      },
+      {
+        "command": "agentWorkspace.fsRename",
+        "title": "%cmd.fsRename%",
+        "category": "Agent Workspace",
+        "icon": "$(edit)"
+      },
+      {
+        "command": "agentWorkspace.fsDelete",
+        "title": "%cmd.fsDelete%",
+        "category": "Agent Workspace",
+        "icon": "$(trash)"
+      },
+      {
+        "command": "agentWorkspace.fsOpenTerminal",
+        "title": "%cmd.fsOpenTerminal%",
+        "category": "Agent Workspace",
+        "icon": "$(terminal)"
       }
     ],
     "menus": {
@@ -209,6 +263,51 @@
           "command": "agentWorkspace.addServer",
           "when": "view =~ /^agentWorkspace.workspace/ && viewItem == server.remote",
           "group": "2_manage@2"
+        },
+        {
+          "command": "agentWorkspace.fsOpenSide",
+          "when": "view =~ /^agentWorkspace.workspace/ && viewItem == fsFile",
+          "group": "1_open@1"
+        },
+        {
+          "command": "agentWorkspace.fsNewFile",
+          "when": "view =~ /^agentWorkspace.workspace/ && (viewItem == fsDir || viewItem == folder.workspace)",
+          "group": "2_new@1"
+        },
+        {
+          "command": "agentWorkspace.fsNewFolder",
+          "when": "view =~ /^agentWorkspace.workspace/ && (viewItem == fsDir || viewItem == folder.workspace)",
+          "group": "2_new@2"
+        },
+        {
+          "command": "agentWorkspace.fsRename",
+          "when": "view =~ /^agentWorkspace.workspace/ && (viewItem == fsFile || viewItem == fsDir)",
+          "group": "3_modify@1"
+        },
+        {
+          "command": "agentWorkspace.fsDelete",
+          "when": "view =~ /^agentWorkspace.workspace/ && (viewItem == fsFile || viewItem == fsDir)",
+          "group": "3_modify@2"
+        },
+        {
+          "command": "agentWorkspace.fsCopyPath",
+          "when": "view =~ /^agentWorkspace.workspace/ && (viewItem == fsFile || viewItem == fsDir)",
+          "group": "4_copy@1"
+        },
+        {
+          "command": "agentWorkspace.fsCopyRelativePath",
+          "when": "view =~ /^agentWorkspace.workspace/ && (viewItem == fsFile || viewItem == fsDir)",
+          "group": "4_copy@2"
+        },
+        {
+          "command": "agentWorkspace.fsRevealOS",
+          "when": "view =~ /^agentWorkspace.workspace/ && (viewItem == fsFile || viewItem == fsDir)",
+          "group": "4_copy@3"
+        },
+        {
+          "command": "agentWorkspace.fsOpenTerminal",
+          "when": "view =~ /^agentWorkspace.workspace/ && (viewItem == fsDir || viewItem == folder.workspace)",
+          "group": "5_terminal@1"
         }
       ]
     }

@@ -78,5 +78,13 @@
   "Type a path to browse its subdirectories": "输入路径以浏览其子目录",
   "Open {0}": "打开 {0}",
   "Directory does not exist: {0}": "目录不存在: {0}",
-  "Filter…": "筛选…"
+  "Filter…": "筛选…",
+  "Path copied": "已复制路径",
+  "Relative path copied": "已复制相对路径",
+  "Reveal in file manager is not available here: {0}": "此处无法在文件管理器中显示: {0}",
+  "New file name": "新文件名",
+  "New folder name": "新文件夹名",
+  "Rename to": "重命名为",
+  "Delete {0}? This cannot be undone.": "删除 {0}？此操作不可撤销。",
+  "Delete": "删除"
 }

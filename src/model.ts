@@ -41,11 +41,12 @@ export interface ChatMessage {
 }
 
 export type RenderBlock =
-  | { kind: 'text'; role: 'user' | 'assistant' | 'system'; markdown: string; ts?: number }
+  | { kind: 'text'; role: 'user' | 'assistant' | 'system'; markdown: string; meta?: string; ts?: number }
   | { kind: 'thinking'; text: string; ts?: number }
   | { kind: 'tool'; name: string; input: string; output?: string; isError?: boolean; status?: string; ts?: number }
   | { kind: 'todo'; items: { content: string; status: string }[]; ts?: number }
   | { kind: 'files'; label: string; files: string[]; ts?: number }
+  | { kind: 'usage'; label: string; ts?: number }
   | { kind: 'notice'; text: string; ts?: number };
 
 /** Result of scanning one server. */

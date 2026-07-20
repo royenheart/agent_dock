@@ -24,6 +24,22 @@ import { t } from './i18n';
 
 type ServerNode = Extract<Node, { kind: 'server' }>;
 type SessionNode = Extract<Node, { kind: 'session' }>;
+type FsEntryNode = Extract<Node, { kind: 'fsEntry' }>;
+type FolderNode = Extract<Node, { kind: 'folder' }>;
+
+function parentUri(uri: vscode.Uri): vscode.Uri {
+  return vscode.Uri.joinPath(uri, '..');
+}
+
+function targetDirUri(node: FsEntryNode | FolderNode): vscode.Uri | undefined {
+  if (node.kind === 'fsEntry') {
+    return node.isDir ? node.uri : parentUri(node.uri);
+  }
+  if (node.kind === 'folder') {
+    return node.workspaceUri;
+  }
+  return undefined;
+}
 
 function sessionTarget(node: SessionNode): SessionTarget | undefined {
   const servers = getServers();
@@ -376,6 +392,100 @@ export function registerCommands(context: vscode.ExtensionContext, provider: Wor
     if (node?.session) {
       await vscode.env.clipboard.writeText(node.session.id);
       vscode.window.showInformationMessage(t('Session ID copied: {0}', node.session.id));
+    }
+  });
+
+  reg('agentWorkspace.fsOpenSide', (node: FsEntryNode) => {
+    if (node?.uri) {
+      void vscode.commands.executeCommand('vscode.open', node.uri, { viewColumn: vscode.ViewColumn.Beside });
+    }
+  });
+
+  reg('agentWorkspace.fsCopyPath', async (node: FsEntryNode) => {
+    if (node?.uri) {
+      await vscode.env.clipboard.writeText(node.uri.fsPath);
+      vscode.window.showInformationMessage(t('Path copied'));
+    }
+  });
+
+  reg('agentWorkspace.fsCopyRelativePath', async (node: FsEntryNode) => {
+    if (node?.uri) {
+      await vscode.env.clipboard.writeText(vscode.workspace.asRelativePath(node.uri, false));
+      vscode.window.showInformationMessage(t('Relative path copied'));
+    }
+  });
+
+  reg('agentWorkspace.fsRevealOS', async (node: FsEntryNode) => {
+    if (node?.uri) {
+      try {
+        await vscode.commands.executeCommand('revealFileInOS', node.uri);
+      } catch (err) {
+        vscode.window.showWarningMessage(t('Reveal in file manager is not available here: {0}', String(err)));
+      }
+    }
+  });
+
+  reg('agentWorkspace.fsNewFile', async (node: FsEntryNode | FolderNode, name?: string) => {
+    const dir = targetDirUri(node);
+    if (!dir) {
+      return;
+    }
+    const fileName = name ?? (await vscode.window.showInputBox({ prompt: t('New file name') }));
+    if (!fileName) {
+      return;
+    }
+    const target = vscode.Uri.joinPath(dir, fileName);
+    await vscode.workspace.fs.writeFile(target, new Uint8Array());
+    provider.refresh();
+    await vscode.window.showTextDocument(target, { preview: false });
+  });
+
+  reg('agentWorkspace.fsNewFolder', async (node: FsEntryNode | FolderNode, name?: string) => {
+    const dir = targetDirUri(node);
+    if (!dir) {
+      return;
+    }
+    const folderName = name ?? (await vscode.window.showInputBox({ prompt: t('New folder name') }));
+    if (!folderName) {
+      return;
+    }
+    await vscode.workspace.fs.createDirectory(vscode.Uri.joinPath(dir, folderName));
+    provider.refresh();
+  });
+
+  reg('agentWorkspace.fsRename', async (node: FsEntryNode, newName?: string) => {
+    if (node?.kind !== 'fsEntry') {
+      return;
+    }
+    const name =
+      newName ??
+      (await vscode.window.showInputBox({ prompt: t('Rename to'), value: node.name }));
+    if (!name || name === node.name) {
+      return;
+    }
+    await vscode.workspace.fs.rename(node.uri, vscode.Uri.joinPath(parentUri(node.uri), name));
+    provider.refresh();
+  });
+
+  reg('agentWorkspace.fsDelete', async (node: FsEntryNode) => {
+    if (node?.kind !== 'fsEntry') {
+      return;
+    }
+    const ok = await vscode.window.showWarningMessage(
+      t('Delete {0}? This cannot be undone.', node.name),
+      { modal: true },
+      t('Delete'),
+    );
+    if (ok) {
+      await vscode.workspace.fs.delete(node.uri, { recursive: node.isDir });
+      provider.refresh();
+    }
+  });
+
+  reg('agentWorkspace.fsOpenTerminal', (node: FsEntryNode | FolderNode) => {
+    const dir = targetDirUri(node);
+    if (dir) {
+      vscode.window.createTerminal({ cwd: dir.fsPath }).show();
     }
   });
 

@@ -76,7 +76,7 @@ suite('agent-workspace e2e', () => {
     const session = { agent: 'opencode', id: 'ses_e2e_inws', title: 't', cwd: '', timeCreated: 0, timeUpdated: 0 };
     const res = await execLocal(buildTranscriptScript(session), 30_000);
     assert.equal(res.code, 0, res.stderr);
-    const blocks = renderTranscript(session, res.stdout);
+    const { blocks, summary } = renderTranscript(session, res.stdout);
     assert.deepEqual(blocks.map((b) => b.kind), ['text', 'text', 'tool', 'todo']);
     assert.equal(blocks[0].markdown, 'e2e 用户问题');
     assert.equal(blocks[1].markdown, 'e2e 助手回答');
@@ -84,6 +84,32 @@ suite('agent-workspace e2e', () => {
     assert.equal(blocks[2].output, 'ok-out');
     assert.equal(blocks[2].status, 'completed');
     assert.deepEqual(blocks[3].items, [{ content: 'e2e 待办事项', status: 'in_progress' }]);
+    assert.ok(summary && typeof summary === 'object');
+  });
+
+  test('file node commands: copy path, new file, rename', async () => {
+    const children = await currentServerChildren();
+    const wsFolder = children.find((n) => n.kind === 'folder' && n.workspaceUri);
+    const wsUri = wsFolder.workspaceUri;
+    const kids = await api.provider.getChildren(wsFolder);
+    const aTxt = kids.find((k) => k.kind === 'fsEntry' && k.name === 'a.txt');
+    assert.ok(aTxt, 'a.txt node exists');
+
+    await vscode.commands.executeCommand('agentWorkspace.fsCopyPath', aTxt);
+    const clip = await vscode.env.clipboard.readText();
+    assert.ok(clip.endsWith('a.txt'), `clipboard should end with a.txt, got ${clip}`);
+
+    await vscode.commands.executeCommand('agentWorkspace.fsNewFile', wsFolder, 'e2e-new.txt');
+    const created = await vscode.workspace.fs.stat(vscode.Uri.joinPath(wsUri, 'e2e-new.txt'));
+    assert.ok(created, 'new file created');
+
+    await vscode.commands.executeCommand(
+      'agentWorkspace.fsRename',
+      { kind: 'fsEntry', uri: vscode.Uri.joinPath(wsUri, 'e2e-new.txt'), name: 'e2e-new.txt', isDir: false },
+      'e2e-renamed.txt',
+    );
+    const renamed = await vscode.workspace.fs.stat(vscode.Uri.joinPath(wsUri, 'e2e-renamed.txt'));
+    assert.ok(renamed, 'file renamed');
   });
 
   test('ssh config parsed from fixture HOME', async () => {

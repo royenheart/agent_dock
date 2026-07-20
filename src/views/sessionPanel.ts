@@ -2,7 +2,7 @@ import * as vscode from 'vscode';
 import type { AgentSession, RenderBlock, ServerConfig } from '../model';
 import { AGENT_LABEL } from '../model';
 import { buildTranscriptScript } from '../agents/discoveryScript';
-import { renderTranscript } from '../agents/transcript';
+import { formatTokens, renderTranscript, type TranscriptSummary } from '../agents/transcript';
 import { execLocal, execRemote } from '../ssh/remoteExec';
 import { t } from '../i18n';
 
@@ -58,7 +58,7 @@ export class SessionPanel {
           panel.webview.html = renderPage(panel.webview, target, undefined, t('Timed out while fetching the session'));
           return;
         }
-        const blocks = renderTranscript(target.session, res.stdout, {
+        const result = renderTranscript(target.session, res.stdout, {
           compactSummary: t('(compacted context summary — skipped)'),
           truncatedNotice: t('Session file is large; showing the last 6 MiB only (earlier messages not loaded)'),
           compactBoundary: t('— context compacted —'),
@@ -67,16 +67,17 @@ export class SessionPanel {
           attachment: t('attachment'),
           subtask: t('subtask'),
         });
-        if (blocks.length === 0 && res.code !== 0) {
+        if (result.blocks.length === 0 && res.code !== 0) {
           panel.webview.html = renderPage(
             panel.webview,
             target,
             undefined,
             t('Failed to read: {0}', res.stderr.slice(0, 400)),
+            result.summary,
           );
           return;
         }
-        panel.webview.html = renderPage(panel.webview, target, blocks, undefined);
+        panel.webview.html = renderPage(panel.webview, target, result.blocks, undefined, result.summary);
       } catch (err) {
         panel.webview.html = renderPage(panel.webview, target, undefined, String(err));
       }
@@ -103,11 +104,29 @@ function renderPage(
   target: SessionTarget,
   blocks: RenderBlock[] | undefined,
   notice: string | undefined,
+  summary?: TranscriptSummary,
 ): string {
   const s = target.session;
   const nonce = String(Math.floor(Math.random() * 1e9));
   const markedUri = webview.asWebviewUri(vscode.Uri.joinPath(panelExtensionUri, 'media', 'vendor', 'marked.umd.js'));
   const purifyUri = webview.asWebviewUri(vscode.Uri.joinPath(panelExtensionUri, 'media', 'vendor', 'purify.min.js'));
+  const summaryParts: string[] = [];
+  if (summary?.model) {
+    summaryParts.push(summary.model);
+  }
+  if (summary?.input) {
+    summaryParts.push(`in ${formatTokens(summary.input)}`);
+  }
+  if (summary?.output) {
+    summaryParts.push(`out ${formatTokens(summary.output)}`);
+  }
+  if (summary?.cacheRead || summary?.cacheWrite) {
+    summaryParts.push(`cache ${formatTokens(summary.cacheRead ?? 0)}/${formatTokens(summary.cacheWrite ?? 0)}`);
+  }
+  if (summary?.cost) {
+    summaryParts.push(`$${summary.cost.toFixed(3)}`);
+  }
+  const summaryLine = summaryParts.join(' · ');
   const payload = JSON.stringify({
     blocks: blocks ?? null,
     notice: notice ?? null,
@@ -134,6 +153,10 @@ function renderPage(
            background: var(--vscode-badge-background); color: var(--vscode-badge-foreground); }
   h1 { font-size: 15px; margin: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .meta { color: var(--vscode-descriptionForeground); font-size: 12px; margin-top: 4px; }
+  .usage-line { color: var(--vscode-charts-blue); font-size: 11px; margin-top: 3px; font-family: var(--vscode-editor-font-family); }
+  .meta-line { color: var(--vscode-descriptionForeground); font-size: 10px; margin-bottom: 4px; font-family: var(--vscode-editor-font-family); }
+  .usage { margin: 6px auto; max-width: 900px; text-align: center; color: var(--vscode-descriptionForeground);
+           font-size: 11px; font-family: var(--vscode-editor-font-family); opacity: 0.85; }
   button { background: var(--vscode-button-background); color: var(--vscode-button-foreground);
            border: none; padding: 5px 12px; border-radius: 4px; cursor: pointer; white-space: nowrap; }
   button:hover { background: var(--vscode-button-hoverBackground); }
@@ -177,6 +200,7 @@ function renderPage(
   <div style="flex:1;min-width:0">
     <h1>${escapeHtml(s.title)}</h1>
     <div class="meta">${escapeHtml(target.serverLabel)} · ${escapeHtml(s.cwd)} · ${s.timeUpdated ? new Date(s.timeUpdated).toLocaleString() : ''}</div>
+    ${summaryLine ? `<div class="usage-line">${escapeHtml(summaryLine)}</div>` : ''}
   </div>
   <button id="refresh">${escapeHtml(t('Refresh'))}</button>
   <button id="resume">${escapeHtml(t('Resume in terminal'))}</button>
@@ -208,11 +232,16 @@ function renderPage(
   }
   function renderText(b) {
     const w = el('div', 'msg ' + b.role);
-    w.append(el('div', 'role', b.role === 'user' ? ui.you : b.role === 'assistant' ? ui.agent : '·'));
+    const roleRow = el('div', 'role', b.role === 'user' ? ui.you : b.role === 'assistant' ? ui.agent : '·');
+    w.append(roleRow);
+    if (b.meta) w.append(el('div', 'meta-line', b.meta));
     const bub = el('div', 'bubble');
     bub.innerHTML = md(b.markdown);
     w.append(bub);
     return w;
+  }
+  function renderUsage(b) {
+    return el('div', 'usage', b.label);
   }
   function renderThinking(b) {
     const d = el('details', 'thinking');
@@ -272,6 +301,7 @@ function renderPage(
       else if (b.kind === 'tool') content.append(renderTool(b));
       else if (b.kind === 'todo') content.append(renderTodo(b));
       else if (b.kind === 'files') content.append(renderFiles(b));
+      else if (b.kind === 'usage') content.append(renderUsage(b));
       else content.append(renderNotice(b));
     }
   }

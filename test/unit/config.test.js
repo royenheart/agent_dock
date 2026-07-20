@@ -57,8 +57,7 @@ test('sshConfig: missing config yields empty list', async () => {
 
 test('settingsData: per-agent buckets, skills attributed to all owning agents', async () => {
   const home = tmpHome();
-  fs.writeFileSync(path.join(home, '.claude.json'), JSON.stringify({ mcpServers: { ctx7: { command: 'npx ctx7' } } }));
-  fs.mkdirSync(path.join(home, '.claude', 'skills', 'sk1'), { recursive: true });
+  fs.writeFileSync(path.join(home, '.claude.json'), JSON.stringify({ mcpServers: { ctx7: { command: 'npx ctx7' } } }));  fs.mkdirSync(path.join(home, '.claude', 'skills', 'sk1'), { recursive: true });
   fs.writeFileSync(path.join(home, '.claude', 'skills', 'sk1', 'SKILL.md'), '---\nname: sk1\ndescription: claude skill\n---\nbody');
   fs.mkdirSync(path.join(home, '.agents', 'skills', 'shared'), { recursive: true });
   fs.writeFileSync(path.join(home, '.agents', 'skills', 'shared', 'SKILL.md'), '---\nname: shared\ndescription: 共享技能\n---\nbody');
@@ -82,4 +81,36 @@ test('settingsData: per-agent buckets, skills attributed to all owning agents', 
   for (const a of ['claude', 'codex', 'opencode']) {
     assert.ok(d.byAgent[a].skills.some((s) => s.name === 'shared'), `${a} should see shared`);
   }
+});
+
+test('settingsData: project-level configs and claude projects map', async () => {
+  const home = tmpHome();
+  fs.writeFileSync(
+    path.join(home, '.claude.json'),
+    JSON.stringify({ projects: { '/work/projA': { mcpServers: { 'proj-mcp': { command: 'npx proj-mcp' } } } } }),
+  );
+  const proj = fs.mkdtempSync(path.join(os.tmpdir(), 'agentws-proj-'));
+  fs.writeFileSync(path.join(proj, '.mcp.json'), JSON.stringify({ mcpServers: { 'file-mcp': { command: 'npx file-mcp' } } }));
+  fs.writeFileSync(path.join(proj, 'opencode.json'), JSON.stringify({ mcp: { 'oc-mcp': { type: 'local', command: ['npx', 'oc-mcp'] } }, plugin: ['proj-plugin@1'] }));
+  fs.mkdirSync(path.join(proj, '.codex'), { recursive: true });
+  fs.writeFileSync(path.join(proj, '.codex', 'config.toml'), '[mcp_servers."cx-mcp"]\ncommand = "npx cx-mcp"\n\n[hooks]\n');
+  fs.mkdirSync(path.join(proj, '.claude'), { recursive: true });
+  fs.writeFileSync(path.join(proj, '.claude', 'settings.json'), JSON.stringify({ hooks: { PreToolUse: [{ hooks: [] }] }, enabledPlugins: { 'p@m': true } }));
+  fs.mkdirSync(path.join(proj, '.claude', 'skills', 'proj-skill'), { recursive: true });
+  fs.writeFileSync(path.join(proj, '.claude', 'skills', 'proj-skill', 'SKILL.md'), '---\nname: proj-skill\ndescription: 项目技能\n---\n');
+
+  const d = await gatherSettings('test', home, undefined, [proj]);
+  const names = (bucket) => bucket.map((x) => x.name);
+  assert.ok(names(d.byAgent.claude.mcps).includes('proj-mcp'), 'claude projects map mcp');
+  assert.ok(names(d.byAgent.claude.mcps).includes('file-mcp'), '.mcp.json mcp');
+  assert.ok(names(d.byAgent.opencode.mcps).includes('oc-mcp'), 'project opencode.json mcp');
+  assert.ok(names(d.byAgent.opencode.plugins).includes('proj-plugin@1'), 'project opencode plugin');
+  assert.ok(names(d.byAgent.codex.mcps).includes('cx-mcp'), 'project codex toml mcp');
+  assert.ok(d.byAgent.codex.hooks.length >= 1, 'project codex hooks');
+  assert.ok(names(d.byAgent.claude.hooks).includes('PreToolUse'), 'project claude hooks');
+  assert.ok(names(d.byAgent.claude.plugins).includes('p@m'), 'project claude enabledPlugins');
+  assert.ok(names(d.byAgent.claude.skills).includes('proj-skill'), 'project skill visible to claude');
+  assert.ok(names(d.byAgent.opencode.skills).includes('proj-skill'), 'project skill visible to opencode');
+  const projMcpItem = d.byAgent.claude.mcps.find((x) => x.name === 'file-mcp');
+  assert.ok(projMcpItem.detail.includes('['), 'project item carries project prefix');
 });

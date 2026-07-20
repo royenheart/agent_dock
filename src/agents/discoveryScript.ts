@@ -80,7 +80,7 @@ import sqlite3, json, sys
 db = sys.argv[1]
 sid = sys.argv[2]
 con = sqlite3.connect("file:%s?mode=ro" % db, uri=True)
-out = {"messages": [], "parts": [], "todos": [], "v2": []}
+out = {"messages": [], "parts": [], "todos": [], "v2": [], "session": None}
 try:
     out["messages"] = con.execute("SELECT id,data FROM message WHERE session_id=? ORDER BY time_created,id", (sid,)).fetchall()
     out["parts"] = con.execute("SELECT message_id,data FROM part WHERE session_id=? ORDER BY time_created,id", (sid,)).fetchall()
@@ -88,6 +88,21 @@ except Exception:
     pass
 try:
     out["todos"] = con.execute("SELECT content,status,priority FROM todo WHERE session_id=? ORDER BY position", (sid,)).fetchall()
+except Exception:
+    pass
+try:
+    cols = [r[1] for r in con.execute("PRAGMA table_info(session)").fetchall()]
+    sel = [c for c in ("agent", "model", "cost", "tokens_input", "tokens_output", "tokens_reasoning", "tokens_cache_read", "tokens_cache_write") if c in cols]
+    if sel:
+        row = con.execute("SELECT " + ",".join(sel) + " FROM session WHERE id=?", (sid,)).fetchone()
+        if row:
+            sess = dict(zip(sel, row))
+            if isinstance(sess.get("model"), str):
+                try:
+                    sess["model"] = json.loads(sess["model"])
+                except Exception:
+                    pass
+            out["session"] = sess
 except Exception:
     pass
 tables = [r[0] for r in con.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()]

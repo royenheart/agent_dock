@@ -38,6 +38,7 @@ export class SettingsViewProvider implements vscode.WebviewViewProvider {
       return;
     }
     const serverLabel = getCurrentDisplayName();
+    const projectDirs = (vscode.workspace.workspaceFolders ?? []).map((f) => f.uri.fsPath);
     const data = await gatherSettings(serverLabel, undefined, {
       npmPackage: t('npm package'),
       localPluginFile: t('local plugin file'),
@@ -46,7 +47,7 @@ export class SettingsViewProvider implements vscode.WebviewViewProvider {
       opencodeHooksName: t('opencode hooks are plugin-based'),
       opencodeHooksDetail: t('no standalone hooks config file; events are subscribed inside plugins'),
       noConfigFound: t('No agent configuration found on the current server (MCP / Skills / Plugins / Hooks)'),
-    });
+    }, projectDirs);
     this.view.webview.html = this.renderHtml(data);
   }
 
