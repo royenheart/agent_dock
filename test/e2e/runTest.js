@@ -10,8 +10,11 @@ async function main() {
   const fx = makeFixtures();
   const wsPath = process.env.E2E_WS === 'real' ? fx.REALWS : fx.LINKWS;
   fs.rmSync(RESULTS_FILE, { force: true });
+  const localWrapper = path.resolve(root, 'test', 'e2e', 'code-under-test.sh');
+  const vscodeExecutablePath =
+    process.env.VSCODE_PATH || (fs.existsSync('/usr/share/code/code') ? localWrapper : undefined);
   const exitCode = await runTests({
-    vscodeExecutablePath: process.env.VSCODE_PATH || path.resolve(root, 'test', 'e2e', 'code-under-test.sh'),
+    vscodeExecutablePath,
     extensionDevelopmentPath: root,
     extensionTestsPath: path.resolve(root, 'test', 'e2e', 'suite', 'index.js'),
     extensionTestsEnv: { HOME: fx.HOME, AGENTWS_E2E_REALWS: fx.REALWS, VSCODE_IPC_HOOK_CLI: '' },

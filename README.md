@@ -43,3 +43,24 @@
 | `agentWorkspace.connectInNewWindow` | `false` | Connect 是否新窗口打开 |
 
 实现方案与调研结论见 `docs/IMPLEMENTATION_PLAN.md`。
+
+## 版本管理与发布
+
+**版本号唯一来源：`package.json` 的 `version` 字段**（vsce 与 CI 都以它为准）。
+
+- `npm version patch|minor|major` —— bump + commit + 自动生成 `vX.Y.Z` tag
+- 或 commitizen：`npx cz bump`（按 conventional commits 自动定级）
+
+`git push --follow-tags` 后，tag 触发 `.github/workflows/release.yml`：编译 → 单测 → 打包 vsix → 创建 GitHub Release（附 vsix）→ 若仓库配置了 `VSCE_PAT` secret 则自动发布到 Marketplace。日常 push/PR 走 `ci.yml`（含真实 VS Code 的 e2e）。
+
+### 手动发布到 VS Code Marketplace
+
+1. 注册 [Azure DevOps](https://dev.azure.com) 账号 → Personal Access Tokens → 新建（scope: **Marketplace → Manage**）
+2. `npm i -g @vscode/vsce`
+3. 创建发布者：`vsce create-publisher royenheart`（须与 `package.json` 的 `publisher` 一致）
+4. 登录：`vsce login royenheart`（粘贴 PAT）
+5. 发布：`vsce publish`（或 `vsce publish patch` 一步 bump+发布）
+
+发布前检查项（已具备）：`publisher`、`license`、`README.md`、`LICENSE`；建议在 `package.json` 补上 `repository` 字段（推送 GitHub 后填入实际地址）。CI 自动发布只需把 PAT 存为仓库 secret `VSCE_PAT`。
+
+> 备选渠道：[Open VSX](https://open-vsx.org)（VSCodium/Cursor 用户的插件市场），用 `npx ovsx publish` 发布同一 vsix。
