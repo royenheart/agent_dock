@@ -1,5 +1,5 @@
 <div align="center">
-  <img src="media/logo.svg" width="96" alt="VSCoder logo">
+  <img src="media/logo.png" width="96" alt="VSCoder logo">
   <h1>VSCoder</h1>
   <p><strong>跨服务器 AI Agent 会话工作区</strong> · Cross-server AI agent workspace for VS Code</p>
   <p>
@@ -51,19 +51,6 @@
 
 - `npm run test:unit` — 纯逻辑单测（node:test）：路径匹配、会话解析、transcript、ssh config、settings 聚合
 - `npm run test:e2e` — `@vscode/test-electron` + xvfb：真实 VS Code 中验证树结构、symlink cwd 匹配、文件命令、transcript、ssh config
-
-## 版本管理与发布
-
-**版本号唯一来源：`package.json` 的 `version` 字段**。
-
-- `npm version patch|minor|major`（自动 bump+commit+`vX.Y.Z` tag）或 `npx cz bump`
-- `git push --follow-tags` → Release workflow：编译 → 单测 → 打包 vsix → GitHub Release →（配置 `VSCE_PAT` secret 后）自动发布到 Marketplace
-
-手动发布到 Marketplace：Azure DevOps 创建 PAT（Marketplace → Manage）→ `vsce create-publisher royenheart` → `vsce login` → `vsce publish`。备选渠道 Open VSX：`npx ovsx publish`。
-
-## 架构
-
-实现方案与调研结论见 `docs/IMPLEMENTATION_PLAN.md`。要点：单脚本远程发现（python3 优先 → sqlite3 → 文件扫描）、opencode 走 SQLite（V1+V2 双 schema）、codex/claude 解析 JSONL、文件与会话经 `vscode.workspace.fs` 透明支持本地与 Remote-SSH 当前服务器。
 
 ## License
 
