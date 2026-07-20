@@ -1,5 +1,6 @@
 import * as vscode from 'vscode';
 import { WorkspaceProvider } from './tree/workspaceProvider';
+import { SessionDecorationProvider } from './tree/sessionDecorations';
 import { SettingsViewProvider } from './views/settingsView';
 import { registerCommands } from './commands';
 
@@ -13,11 +14,15 @@ export function activate(context: vscode.ExtensionContext): void {
     treeDataProvider: provider,
     showCollapseAll: true,
   });
+  const decorations = new SessionDecorationProvider(provider.store);
+  provider.store.onDidSettle = () => decorations.refresh();
+  provider.onDidChangeTreeData(() => decorations.refresh());
   const settings = new SettingsViewProvider(context.extensionUri);
 
   context.subscriptions.push(
     tree,
     treeExplorer,
+    vscode.window.registerFileDecorationProvider(decorations),
     vscode.window.registerWebviewViewProvider(SettingsViewProvider.viewType, settings, {
       webviewOptions: { retainContextWhenHidden: true },
     }),

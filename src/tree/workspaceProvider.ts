@@ -1,4 +1,5 @@
 import * as vscode from 'vscode';
+import * as fsp from 'node:fs/promises';
 import type { AgentKind, AgentSession, ServerConfig } from '../model';
 import { AGENT_LABEL } from '../model';
 import { classifyServers, getCurrentContext, getServers, getSessionLimit } from '../config';
@@ -51,8 +52,25 @@ function pathBasename(p: string): string {
   return parts[parts.length - 1] ?? p;
 }
 
+function normPath(p: string): string {
+  return p.length > 1 && p.endsWith('/') ? p.slice(0, -1) : p;
+}
+
 function isUnder(child: string, parent: string): boolean {
-  return child === parent || child.startsWith(parent.endsWith('/') ? parent : `${parent}/`);
+  const c = normPath(child);
+  const p = normPath(parent);
+  if (p === '/') {
+    return c.startsWith('/');
+  }
+  return c === p || c.startsWith(`${p}/`);
+}
+
+async function realpathSafe(p: string): Promise<string> {
+  try {
+    return await fsp.realpath(p);
+  } catch {
+    return p;
+  }
 }
 
 /** Caches per-server session scans; fetch happens lazily on first expand. */
@@ -60,6 +78,8 @@ export class SessionStore {
   private cache = new Map<string, AgentSession[]>();
   private errors = new Map<string, string>();
   private inflight = new Map<string, Promise<void>>();
+
+  onDidSettle?: (key: string) => void;
 
   async sessionsFor(key: string, server: ServerConfig | undefined): Promise<{ sessions: AgentSession[]; error?: string }> {
     if (this.cache.has(key)) {
@@ -82,6 +102,16 @@ export class SessionStore {
         return;
       }
       const { sessions, notes } = parseDiscoveryOutput(res.stdout);
+      if (!server) {
+        // 本机会话 cwd 做 realpath 归一，避免与 workspace 路径因符号链接不匹配
+        await Promise.all(
+          sessions.map(async (s) => {
+            if (s.cwd) {
+              s.cwd = await realpathSafe(s.cwd);
+            }
+          }),
+        );
+      }
       this.cache.set(key, sessions);
       if (sessions.length === 0 && res.code !== 0) {
         this.errors.set(key, (res.stderr || res.stdout).slice(0, 500) || `exit code ${res.code}`);
@@ -93,6 +123,7 @@ export class SessionStore {
       this.cache.set(key, []);
     } finally {
       this.inflight.delete(key);
+      this.onDidSettle?.(key);
     }
   }
 
@@ -275,17 +306,25 @@ export class WorkspaceProvider implements vscode.TreeDataProvider<Node> {
 
   private currentServerChildren(sessions: AgentSession[], error?: string): Node[] {
     const nodes: Node[] = [];
-    const wsFolders = (vscode.workspace.workspaceFolders ?? []).map((f) => f.uri);
+    const wsFolders = vscode.workspace.workspaceFolders ?? [];
     const covered = new Set<string>();
-
-    for (const uri of wsFolders) {
-      const fsPath = uri.fsPath;
-      const under = sessions.filter((s) => s.cwd && isUnder(s.cwd, fsPath));
-      under.forEach((s) => covered.add(s.id + s.agent));
-      nodes.push({ kind: 'folder', serverKey: CURRENT_SERVER_KEY, path: fsPath, label: pathBasename(fsPath), workspaceUri: uri });
+    for (const f of wsFolders) {
+      const fsPath = f.uri.fsPath;
+      for (const s of sessions) {
+        if (s.cwd && isUnder(s.cwd, fsPath)) {
+          covered.add(`${s.agent}:${s.id}`);
+        }
+      }
+      nodes.push({
+        kind: 'folder',
+        serverKey: CURRENT_SERVER_KEY,
+        path: fsPath,
+        label: pathBasename(fsPath),
+        workspaceUri: f.uri,
+      });
     }
 
-    const rest = sessions.filter((s) => !covered.has(s.id + s.agent));
+    const rest = sessions.filter((s) => !covered.has(`${s.agent}:${s.id}`));
     const extra = groupByCwd(rest);
     for (const [cwd] of extra) {
       nodes.push({ kind: 'folder', serverKey: CURRENT_SERVER_KEY, path: cwd, label: pathBasename(cwd) || cwd });
@@ -301,15 +340,20 @@ export class WorkspaceProvider implements vscode.TreeDataProvider<Node> {
   }
 
   private async folderChildren(node: Extract<Node, { kind: 'folder' }>): Promise<Node[]> {
+    const sessions = await this.sessionsUnder(node.serverKey, node.path);
     if (node.workspaceUri) {
       const entries = await this.dirChildren(node.workspaceUri);
-      const hasSessions = (await this.sessionsUnder(node.serverKey, node.path)).length > 0;
-      if (hasSessions) {
+      if (sessions.length > 0) {
         entries.push({ kind: 'sessionsRoot', serverKey: node.serverKey, folderPath: node.path });
       }
       return entries;
     }
-    return this.sessionsUnder(node.serverKey, node.path);
+    if (node.serverKey === CURRENT_SERVER_KEY) {
+      return sessions.length > 0
+        ? [{ kind: 'sessionsRoot', serverKey: node.serverKey, folderPath: node.path }]
+        : [];
+    }
+    return sessions;
   }
 
   private async sessionsUnder(serverKey: string, folderPath: string): Promise<Node[]> {
