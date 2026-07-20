@@ -77,17 +77,6 @@ export function resumeInTerminal(target: SessionTarget): void {
 }
 
 async function connectToServer(server: ServerConfig): Promise<void> {
-  const sshExt = vscode.extensions.getExtension('ms-vscode-remote.remote-ssh');
-  if (!sshExt) {
-    const choice = await vscode.window.showInformationMessage(
-      t('Connecting to remote servers requires the Remote-SSH extension'),
-      t('Install Remote-SSH'),
-    );
-    if (choice) {
-      await vscode.env.openExternal(vscode.Uri.parse('vscode:extension/ms-vscode-remote.remote-ssh'));
-    }
-    return;
-  }
   let home = '/';
   try {
     const res = await execRemote(server, 'echo $HOME', 10_000);
@@ -100,9 +89,16 @@ async function connectToServer(server: ServerConfig): Promise<void> {
   }
   const authority = `ssh-remote+${server.user ? `${server.user}@` : ''}${server.host}${server.port ? `:${server.port}` : ''}`;
   const uri = vscode.Uri.from({ scheme: 'vscode-remote', authority, path: home });
-  await vscode.commands.executeCommand('vscode.openFolder', uri, {
-    forceNewWindow: getConnectInNewWindow(),
-  });
+  try {
+    // Remote-SSH 是客户端侧扩展，远程窗口的扩展宿主探测不到它，故不做安装检查（踩过的坑）
+    await vscode.commands.executeCommand('vscode.openFolder', uri, {
+      forceNewWindow: getConnectInNewWindow(),
+    });
+  } catch (err) {
+    vscode.window.showErrorMessage(
+      t('Failed to connect to {0}: {1}. Make sure the Remote-SSH extension is installed and ssh key auth works non-interactively.', server.host, String(err)),
+    );
+  }
 }
 
 function validateServerName(v: string): string | undefined {

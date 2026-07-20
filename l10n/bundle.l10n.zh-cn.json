@@ -96,5 +96,6 @@
   "cache read: tokens served from prompt cache · cache write: tokens newly cached · skills: estimated from injected content (chars/4)": "缓存读：命中提示词缓存复用的 token · 缓存写：新写入缓存的 token · skills：按注入内容估算（字符数/4）",
   "Select an agent backend": "选择 Agent 后端",
   "Session monitor": "会话监控",
-  "calls": "次"
+  "calls": "次",
+  "Failed to connect to {0}: {1}. Make sure the Remote-SSH extension is installed and ssh key auth works non-interactively.": "连接 {0} 失败: {1}。请确认已安装 Remote-SSH 扩展且 ssh 密钥免密可用。"
 }
