@@ -121,8 +121,11 @@ function renderPage(
   if (summary?.output) {
     summaryParts.push(`out ${formatTokens(summary.output)}`);
   }
-  if (summary?.cacheRead || summary?.cacheWrite) {
-    summaryParts.push(`cache ${formatTokens(summary.cacheRead ?? 0)}/${formatTokens(summary.cacheWrite ?? 0)}`);
+  if (summary?.cacheRead) {
+    summaryParts.push(t('cache read {0}', formatTokens(summary.cacheRead)));
+  }
+  if (summary?.cacheWrite) {
+    summaryParts.push(t('cache write {0}', formatTokens(summary.cacheWrite)));
   }
   if (summary?.cost) {
     summaryParts.push(`$${summary.cost.toFixed(3)}`);
@@ -204,7 +207,7 @@ function renderPage(
   <div style="flex:1;min-width:0">
     <h1>${escapeHtml(s.title)}</h1>
     <div class="meta">${escapeHtml(target.serverLabel)} · ${escapeHtml(s.cwd)} · ${s.timeUpdated ? new Date(s.timeUpdated).toLocaleString() : ''}</div>
-    ${summaryLine ? `<div class="usage-line">${escapeHtml(summaryLine)}</div>` : ''}
+    ${summaryLine ? `<div class="usage-line" title="${escapeHtml(t('cache read: tokens served from prompt cache · cache write: tokens newly cached · skills: estimated from injected content (chars/4)'))}">${escapeHtml(summaryLine)}</div>` : ''}
   </div>
   <button id="refresh">${escapeHtml(t('Refresh'))}</button>
   <button id="resume">${escapeHtml(t('Resume in terminal'))}</button>
