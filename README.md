@@ -52,6 +52,45 @@
 - `npm run test:unit` — 纯逻辑单测（node:test）：路径匹配、会话解析、transcript、ssh config、settings 聚合
 - `npm run test:e2e` — `@vscode/test-electron` + xvfb：真实 VS Code 中验证树结构、symlink cwd 匹配、文件命令、transcript、ssh config
 
+## 版本管理与发布
+
+**版本号唯一来源：`package.json` 的 `version` 字段**。
+
+- `npm version patch|minor|major`（自动 bump+commit+`vX.Y.Z` tag）或 `npx cz bump`
+- `git push --follow-tags` → Release workflow：编译 → 单测 → 打包 vsix → GitHub Release →（配置凭据后）自动发布到 Marketplace
+- `vsce publish patch|minor|major` 也会自动 bump 并在 git 仓库生成版本 commit + tag（`-m` 可自定义提交信息）
+
+### 凭据方式（重要：全局 PAT 将于 2026-12-01 退役）
+
+官方公告：[Retirement of global Personal Access Tokens in Azure DevOps](https://devblogs.microsoft.com/devops/retirement-of-global-personal-access-tokens-in-azure-devops/)。
+
+**推荐（免密，长期有效）：Microsoft Entra ID + Workload Identity Federation**
+
+1. Azure DevOps → Project Settings → **Service Connections** → 新建 Azure Resource Manager → **Workload Identity Federation (manual)**，草稿保存
+2. Azure Portal → 创建 **user-assigned managed identity**，授 **Reader** 角色，记录 Client ID / Tenant ID / Subscription
+3. 双向交换联邦凭据（ADO 的 issuer/subject ↔ Azure 的 client/tenant/subscription），Verify & save
+4. Service Connection → 授权给发布流水线
+5. `az rest -u https://app.vssps.visualstudio.com/_apis/profile/profiles/me --resource 499b84ac-1321-427f-aa17-267ca6975798` 取 managed identity 的 resource ID
+6. [Marketplace 发布者管理页](https://marketplace.visualstudio.com/manage) → 把该 managed identity（resource ID）加为 publisher 成员（**Contributor**）
+7. 流水线中 `vsce publish --azure-credential`（需 vsce ≥ 2.26.1；GitHub Actions 可用 `azure/login@v2` OIDC 登录后执行）
+
+**过渡（2026-12-01 前可用）：PAT**（当前 `release.yml` 的 `VSCE_PAT` 方式）
+
+1. [dev.azure.com](https://dev.azure.com) 建组织 → User settings → Personal access tokens → New（scope: **Marketplace → Manage**）
+2. [Marketplace 发布者管理页](https://marketplace.visualstudio.com/manage) → **Create publisher**（ID 一旦创建不可改，须与 `package.json` 的 `publisher` 一致）
+3. `vsce login royenheart`（粘贴 PAT 验证）
+4. `vsce publish`（或 `vsce publish patch` bump+发布）
+
+### 其他市场要点
+
+- 图标必须 PNG ≥128px（本仓库 `media/logo.png` 已满足）；README/CHANGELOG 图片不能是 SVG（受信 badge 除外）
+- **Remove 扩展不可逆且名称永久保留**，优先用 Unpublish / Deprecate（[deprecation 讨论区](https://github.com/microsoft/vscode-discussions/discussions/1)）
+- Pre-release：`vsce publish --pre-release`，建议 release 用偶数 minor、pre-release 用奇数 minor
+- Verified publisher：扩展上架满 6 个月 + 域名注册满 6 个月 + DNS TXT 验证（[申请入口](https://marketplace.visualstudio.com/manage)）
+- 可选字段：`pricing`（Free/Trial）、`sponsor.url`、`galleryBanner.color`
+
+备选渠道：[Open VSX](https://open-vsx.org)，`npx ovsx publish`。
+
 ## License
 
 MIT
