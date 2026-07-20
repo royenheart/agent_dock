@@ -1,3 +1,4 @@
+import * as os from 'node:os';
 import * as vscode from 'vscode';
 import type { ServerConfig } from './model';
 
@@ -95,6 +96,19 @@ export function getCurrentContext(): CurrentContext {
   const plus = authority.indexOf('+');
   const sshHost = plus >= 0 ? decodeURIComponent(authority.slice(plus + 1)) : undefined;
   return { isLocal: false, remoteName, sshHost };
+}
+
+// 远程窗口下扩展宿主就在远程机上，authority 不可得时用 os.hostname() 即远程机名
+export function getCurrentDisplayName(): string {
+  const ctx = getCurrentContext();
+  if (ctx.isLocal) {
+    return os.hostname() || 'Local';
+  }
+  if (ctx.sshHost) {
+    const match = getServers().find((s) => hostMatches(ctx.sshHost!, s));
+    return match?.name ?? ctx.sshHost;
+  }
+  return os.hostname() || ctx.remoteName || 'remote';
 }
 
 /** Loose match: authority host may carry user@ / :port decorations. */

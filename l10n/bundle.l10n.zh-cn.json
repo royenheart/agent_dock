@@ -77,5 +77,6 @@
   "Add directory on {0}": "在 {0} 上添加目录",
   "Type a path to browse its subdirectories": "输入路径以浏览其子目录",
   "Open {0}": "打开 {0}",
-  "Directory does not exist: {0}": "目录不存在: {0}"
+  "Directory does not exist: {0}": "目录不存在: {0}",
+  "Filter…": "筛选…"
 }

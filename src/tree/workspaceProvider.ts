@@ -1,7 +1,7 @@
 import * as vscode from 'vscode';
 import type { AgentKind, AgentSession, ServerConfig } from '../model';
 import { AGENT_LABEL } from '../model';
-import { classifyServers, getCurrentContext, getServers, getSessionLimit } from '../config';
+import { classifyServers, getCurrentContext, getCurrentDisplayName, getServers, getSessionLimit } from '../config';
 import { buildDiscoveryScript } from '../agents/discoveryScript';
 import { parseDiscoveryOutput } from '../agents/parse';
 import { execLocal, execRemote } from '../ssh/remoteExec';
@@ -243,13 +243,11 @@ export class WorkspaceProvider implements vscode.TreeDataProvider<Node> {
   private async rootNodes(): Promise<Node[]> {
     const servers = getServers();
     const { current, remotes } = classifyServers(servers);
-    const ctx = getCurrentContext();
     const nodes: Node[] = [];
     if (current) {
       nodes.push({ kind: 'server', key: current.name, label: current.name, isCurrent: true, server: current });
     } else {
-      const label = ctx.isLocal ? t('Local') : (ctx.sshHost ?? t('Current server'));
-      nodes.push({ kind: 'server', key: CURRENT_SERVER_KEY, label, isCurrent: true });
+      nodes.push({ kind: 'server', key: CURRENT_SERVER_KEY, label: getCurrentDisplayName(), isCurrent: true });
     }
     for (const s of remotes) {
       nodes.push({ kind: 'server', key: s.name, label: s.name, isCurrent: false, server: s });

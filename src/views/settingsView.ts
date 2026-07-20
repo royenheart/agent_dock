@@ -1,6 +1,6 @@
 import * as fs from 'node:fs/promises';
 import * as vscode from 'vscode';
-import { getCurrentContext } from '../config';
+import { getCurrentDisplayName } from '../config';
 import { gatherSettings, type SettingsData } from './settingsData';
 import { t } from '../i18n';
 
@@ -37,8 +37,7 @@ export class SettingsViewProvider implements vscode.WebviewViewProvider {
     if (!this.view) {
       return;
     }
-    const ctx = getCurrentContext();
-    const serverLabel = ctx.isLocal ? t('Local') : (ctx.sshHost ?? ctx.remoteName ?? 'remote');
+    const serverLabel = getCurrentDisplayName();
     const data = await gatherSettings(serverLabel, undefined, {
       npmPackage: t('npm package'),
       localPluginFile: t('local plugin file'),
@@ -58,6 +57,7 @@ export class SettingsViewProvider implements vscode.WebviewViewProvider {
       server: t('Current server: {0}', data?.serverLabel ?? ''),
       loading: t('Loading…'),
       emptyAgent: t('No configuration for this agent on the current server'),
+      filterPlaceholder: t('Filter…'),
     };
     const payload = JSON.stringify({ data, ui }).replace(/</g, '\\u003c');
     return `<!DOCTYPE html>
@@ -76,7 +76,13 @@ export class SettingsViewProvider implements vscode.WebviewViewProvider {
          background: var(--vscode-button-secondaryBackground); }
   .tab.active { background: var(--vscode-button-background); color: var(--vscode-button-foreground); }
   .section { margin: 10px 0 4px; font-weight: 600; color: var(--vscode-descriptionForeground);
-             border-bottom: 1px solid var(--vscode-panel-border); padding-bottom: 2px; }
+             border-bottom: 1px solid var(--vscode-panel-border); padding-bottom: 2px;
+             display: flex; justify-content: space-between; align-items: center; cursor: pointer; user-select: none; }
+  .sec-actions { display: flex; gap: 4px; }
+  .sec-actions button { padding: 0 6px; font-size: 11px; }
+  .filter-input { width: 100%; margin: 4px 0; padding: 3px 6px; border-radius: 4px;
+                  background: var(--vscode-input-background); color: var(--vscode-input-foreground);
+                  border: 1px solid var(--vscode-input-border, transparent); outline: none; }
   .item { padding: 6px 8px; border-radius: 4px; margin-bottom: 4px; background: var(--vscode-editor-inactiveSelectionBackground); }
   .item:hover { outline: 1px solid var(--vscode-focusBorder); cursor: pointer; }
   .name { font-weight: 600; word-break: break-all; }
@@ -96,6 +102,7 @@ export class SettingsViewProvider implements vscode.WebviewViewProvider {
   const TABS = [['claude','Claude Code'],['codex','Codex'],['opencode','opencode']];
   const SECTIONS = [['mcps','MCPs'],['skills','Skills'],['plugins','Plugins'],['hooks','Hooks']];
   let active = 'claude';
+  const secState = {};
   function esc(s) { const d = document.createElement('div'); d.textContent = s ?? ''; return d.innerHTML; }
   function total(b) { return SECTIONS.reduce((n, [k]) => n + ((b && b[k]) ? b[k].length : 0), 0); }
   function render() {
@@ -119,22 +126,56 @@ export class SettingsViewProvider implements vscode.WebviewViewProvider {
       for (const [key, label] of SECTIONS) {
         const items = bucket[key] || [];
         if (!items.length) { continue; }
+        const skey = active + ':' + key;
+        const st = secState[skey] || (secState[skey] = { collapsed: false, filterOn: false, filterText: '' });
         shown += items.length;
+
         const h = document.createElement('div');
         h.className = 'section';
-        h.textContent = label + ' (' + items.length + ')';
-        c.appendChild(h);
-        for (const it of items) {
-          const div = document.createElement('div');
-          div.className = 'item';
-          div.innerHTML = '<span class="name">' + esc(it.name) + '</span>'
-            + (it.detail ? '<div class="detail">' + esc(it.detail) + '</div>' : '');
-          if (it.sourcePath) {
-            div.title = it.sourcePath;
-            div.onclick = () => vscode.postMessage({ type: 'openFile', path: it.sourcePath });
+        const titleEl = document.createElement('span');
+        const actions = document.createElement('span');
+        actions.className = 'sec-actions';
+        const fbtn = document.createElement('button');
+        fbtn.textContent = '🔍';
+        fbtn.onclick = (ev) => { ev.stopPropagation(); st.filterOn = !st.filterOn; if (!st.filterOn) st.filterText = ''; render(); };
+        const cbtn = document.createElement('button');
+        cbtn.textContent = st.collapsed ? '▸' : '▾';
+        cbtn.onclick = (ev) => { ev.stopPropagation(); st.collapsed = !st.collapsed; render(); };
+        actions.append(fbtn, cbtn);
+        h.append(titleEl, actions);
+        h.onclick = () => { st.collapsed = !st.collapsed; render(); };
+        c.append(h);
+
+        const listEl = document.createElement('div');
+        function renderItems() {
+          const q = (st.filterText || '').toLowerCase();
+          const filtered = q ? items.filter(it => ((it.name || '') + ' ' + (it.detail || '')).toLowerCase().includes(q)) : items;
+          titleEl.textContent = label + ' (' + (q ? filtered.length + '/' : '') + items.length + ')';
+          listEl.innerHTML = '';
+          if (st.collapsed) { return; }
+          for (const it of filtered) {
+            const div = document.createElement('div');
+            div.className = 'item';
+            div.innerHTML = '<span class="name">' + esc(it.name) + '</span>'
+              + (it.detail ? '<div class="detail">' + esc(it.detail) + '</div>' : '');
+            if (it.sourcePath) {
+              div.title = it.sourcePath;
+              div.onclick = () => vscode.postMessage({ type: 'openFile', path: it.sourcePath });
+            }
+            listEl.append(div);
           }
-          c.appendChild(div);
         }
+        if (st.filterOn) {
+          const inp = document.createElement('input');
+          inp.className = 'filter-input';
+          inp.placeholder = ui.filterPlaceholder;
+          inp.value = st.filterText;
+          inp.onclick = (ev) => ev.stopPropagation();
+          inp.oninput = () => { st.filterText = inp.value; renderItems(); };
+          c.append(inp);
+        }
+        c.append(listEl);
+        renderItems();
       }
     }
     if (!shown) {
