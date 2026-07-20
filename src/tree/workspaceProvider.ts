@@ -7,6 +7,7 @@ import { parseDiscoveryOutput } from '../agents/parse';
 import { execLocal, execRemote } from '../ssh/remoteExec';
 import { isUnder, pathBasename, realpathSafe } from '../paths';
 import { groupByCwd, partitionSessions } from './structure';
+import { t } from '../i18n';
 
 export const CURRENT_SERVER_KEY = '__current__';
 
@@ -32,18 +33,18 @@ function formatRelative(ms: number): string {
   const diff = Date.now() - ms;
   const min = Math.floor(diff / 60_000);
   if (min < 1) {
-    return '刚刚';
+    return t('just now');
   }
   if (min < 60) {
-    return `${min} 分钟前`;
+    return t('{0} min ago', min);
   }
   const hours = Math.floor(min / 60);
   if (hours < 24) {
-    return `${hours} 小时前`;
+    return t('{0} hours ago', hours);
   }
   const days = Math.floor(hours / 24);
   if (days < 30) {
-    return `${days} 天前`;
+    return t('{0} days ago', days);
   }
   const d = new Date(ms);
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
@@ -141,7 +142,7 @@ export class WorkspaceProvider implements vscode.TreeDataProvider<Node> {
         const item = new vscode.TreeItem(node.label, vscode.TreeItemCollapsibleState.Expanded);
         item.iconPath = new vscode.ThemeIcon(node.isCurrent ? 'remote-explorer' : 'server');
         item.contextValue = node.isCurrent ? 'server.current' : 'server.remote';
-        item.description = node.isCurrent ? '当前连接' : undefined;
+        item.description = node.isCurrent ? t('connected') : undefined;
         item.tooltip = node.server
           ? `${node.server.user ? `${node.server.user}@` : ''}${node.server.host}${node.server.port ? `:${node.server.port}` : ''}`
           : node.label;
@@ -161,10 +162,10 @@ export class WorkspaceProvider implements vscode.TreeDataProvider<Node> {
         return item;
       }
       case 'otherSessions': {
-        const item = new vscode.TreeItem('其他目录会话', vscode.TreeItemCollapsibleState.Collapsed);
+        const item = new vscode.TreeItem(t('Sessions outside workspace'), vscode.TreeItemCollapsibleState.Collapsed);
         item.iconPath = new vscode.ThemeIcon('history');
         item.contextValue = 'otherSessions';
-        item.tooltip = 'cwd 不在任何 workspace 目录下的会话';
+        item.tooltip = t('Sessions whose working directory is not under any workspace folder');
         return item;
       }
       case 'session': {
@@ -174,7 +175,7 @@ export class WorkspaceProvider implements vscode.TreeDataProvider<Node> {
         item.contextValue = 'session';
         item.description = `${AGENT_LABEL[s.agent]} · ${formatRelative(s.timeUpdated)}`;
         item.tooltip = new vscode.MarkdownString(
-          `**${s.title}**\n\n- agent: ${AGENT_LABEL[s.agent]}\n- id: \`${s.id}\`\n- cwd: \`${s.cwd}\`\n- 更新: ${s.timeUpdated ? new Date(s.timeUpdated).toLocaleString() : '-'}`,
+          `**${s.title}**\n\n- agent: ${AGENT_LABEL[s.agent]}\n- id: \`${s.id}\`\n- cwd: \`${s.cwd}\`\n- ${t('updated')}: ${s.timeUpdated ? new Date(s.timeUpdated).toLocaleString() : '-'}`,
         );
         item.command = {
           command: 'agentWorkspace.openSession',
@@ -246,7 +247,7 @@ export class WorkspaceProvider implements vscode.TreeDataProvider<Node> {
     if (current) {
       nodes.push({ kind: 'server', key: current.name, label: current.name, isCurrent: true, server: current });
     } else {
-      const label = ctx.isLocal ? '本机 (Local)' : (ctx.sshHost ?? '当前服务器');
+      const label = ctx.isLocal ? t('Local') : (ctx.sshHost ?? t('Current server'));
       nodes.push({ kind: 'server', key: CURRENT_SERVER_KEY, label, isCurrent: true });
     }
     for (const s of remotes) {
@@ -280,7 +281,7 @@ export class WorkspaceProvider implements vscode.TreeDataProvider<Node> {
     }
     if (error && sessions.length === 0) {
       return [
-        { kind: 'info', label: '加载失败', severity: 'error', tooltip: error },
+        { kind: 'info', label: t('Failed to load'), severity: 'error', tooltip: error },
         { kind: 'info', label: error.split('\n')[0].slice(0, 80), severity: 'warning', tooltip: error },
       ];
     }
@@ -292,10 +293,10 @@ export class WorkspaceProvider implements vscode.TreeDataProvider<Node> {
       label: pathBasename(g.folderPath) || g.folderPath,
     }));
     if (error) {
-      nodes.unshift({ kind: 'info', label: '部分数据不可用', severity: 'warning', tooltip: error });
+      nodes.unshift({ kind: 'info', label: t('Partial data unavailable'), severity: 'warning', tooltip: error });
     }
     if (nodes.length === 0) {
-      nodes.push({ kind: 'info', label: '未发现 agent 会话', severity: 'info' });
+      nodes.push({ kind: 'info', label: t('No agent sessions found'), severity: 'info' });
     }
     return nodes;
   }
@@ -320,10 +321,10 @@ export class WorkspaceProvider implements vscode.TreeDataProvider<Node> {
     }
 
     if (error) {
-      nodes.unshift({ kind: 'info', label: '会话扫描警告', severity: 'warning', tooltip: error });
+      nodes.unshift({ kind: 'info', label: t('Session scan warnings'), severity: 'warning', tooltip: error });
     }
     if (nodes.length === 0) {
-      nodes.push({ kind: 'info', label: '无 workspace 目录，也未发现会话', severity: 'info' });
+      nodes.push({ kind: 'info', label: t('No workspace folders and no sessions found'), severity: 'info' });
     }
     return nodes;
   }
@@ -383,11 +384,11 @@ export class WorkspaceProvider implements vscode.TreeDataProvider<Node> {
       files.sort(cmp);
       const out: Node[] = [...dirs, ...files];
       if (entries.length > 500) {
-        out.push({ kind: 'info', label: `… 共 ${entries.length} 项，仅显示前 500`, severity: 'info' });
+        out.push({ kind: 'info', label: t('… {0} entries in total, showing the first 500', entries.length), severity: 'info' });
       }
       return out;
     } catch {
-      return [{ kind: 'info', label: '目录读取失败', severity: 'warning' }];
+      return [{ kind: 'info', label: t('Failed to read directory'), severity: 'warning' }];
     }
   }
 }

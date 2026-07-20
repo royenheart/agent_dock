@@ -76,10 +76,14 @@ suite('agent-workspace e2e', () => {
     const session = { agent: 'opencode', id: 'ses_e2e_inws', title: 't', cwd: '', timeCreated: 0, timeUpdated: 0 };
     const res = await execLocal(buildTranscriptScript(session), 30_000);
     assert.equal(res.code, 0, res.stderr);
-    const msgs = renderTranscript(session, res.stdout);
-    assert.deepEqual(msgs.map((m) => m.role), ['user', 'assistant']);
-    assert.equal(msgs[0].text, 'e2e 用户问题');
-    assert.equal(msgs[1].text, 'e2e 助手回答');
+    const blocks = renderTranscript(session, res.stdout);
+    assert.deepEqual(blocks.map((b) => b.kind), ['text', 'text', 'tool', 'todo']);
+    assert.equal(blocks[0].markdown, 'e2e 用户问题');
+    assert.equal(blocks[1].markdown, 'e2e 助手回答');
+    assert.equal(blocks[2].name, 'bash');
+    assert.equal(blocks[2].output, 'ok-out');
+    assert.equal(blocks[2].status, 'completed');
+    assert.deepEqual(blocks[3].items, [{ content: 'e2e 待办事项', status: 'in_progress' }]);
   });
 
   test('ssh config parsed from fixture HOME', async () => {

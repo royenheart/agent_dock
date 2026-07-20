@@ -23,6 +23,26 @@ export interface SettingsData {
   notes: string[];
 }
 
+export interface SettingsStrings {
+  npmPackage: string;
+  localPluginFile: string;
+  handlers: (n: number) => string;
+  installLocations: (n: number) => string;
+  opencodeHooksName: string;
+  opencodeHooksDetail: string;
+  noConfigFound: string;
+}
+
+export const DEFAULT_SETTINGS_STRINGS: SettingsStrings = {
+  npmPackage: 'npm package',
+  localPluginFile: 'local plugin file',
+  handlers: (n) => `${n} handlers`,
+  installLocations: (n) => `(${n} install locations)`,
+  opencodeHooksName: 'opencode hooks are plugin-based',
+  opencodeHooksDetail: 'no standalone hooks config file; events are subscribed inside plugins',
+  noConfigFound: 'No agent configuration found on the current server (MCP / Skills / Plugins / Hooks)',
+};
+
 const AGENTS: AgentKind[] = ['claude', 'codex', 'opencode'];
 
 function emptyBucket(): AgentBucket {
@@ -105,7 +125,7 @@ const SKILL_ROOTS: { rel: string; agents: AgentKind[] }[] = [
   { rel: '.agents/skills', agents: ['claude', 'opencode', 'codex'] },
 ];
 
-async function gatherSkills(home: string): Promise<SettingsItem[]> {
+async function gatherSkills(home: string, strings: SettingsStrings): Promise<SettingsItem[]> {
   interface Acc {
     item: SettingsItem;
     paths: string[];
@@ -142,7 +162,7 @@ async function gatherSkills(home: string): Promise<SettingsItem[]> {
   const out: SettingsItem[] = [];
   for (const { item, paths } of byAgentAndName.values()) {
     if (paths.length > 1) {
-      item.detail = `${item.detail ?? ''}（共 ${paths.length} 个安装位置）`.trim();
+      item.detail = `${item.detail ?? ''} ${strings.installLocations(paths.length)}`.trim();
     }
     out.push(item);
   }
@@ -150,7 +170,11 @@ async function gatherSkills(home: string): Promise<SettingsItem[]> {
   return out;
 }
 
-export async function gatherSettings(serverLabel: string, homeDir?: string): Promise<SettingsData> {
+export async function gatherSettings(
+  serverLabel: string,
+  homeDir?: string,
+  strings: SettingsStrings = DEFAULT_SETTINGS_STRINGS,
+): Promise<SettingsData> {
   const home = homeDir ?? os.homedir();
   const byAgent: Record<AgentKind, AgentBucket> = {
     claude: emptyBucket(),
@@ -184,7 +208,7 @@ export async function gatherSettings(serverLabel: string, homeDir?: string): Pro
     const count = Array.isArray(handlers) ? handlers.length : 1;
     byAgent.claude.hooks.push({
       name: event,
-      detail: `${count} 个处理器`,
+      detail: strings.handlers(count),
       agent: 'claude',
       sourcePath: claudeSettingsPath,
     });
@@ -228,28 +252,28 @@ export async function gatherSettings(serverLabel: string, homeDir?: string): Pro
   }
   const ocPluginList = Array.isArray(ocJson?.plugin) ? (ocJson.plugin as unknown[]) : [];
   for (const p of ocPluginList) {
-    byAgent.opencode.plugins.push({ name: String(p), detail: 'npm 包', agent: 'opencode', sourcePath: ocJsonPath });
+    byAgent.opencode.plugins.push({ name: String(p), detail: strings.npmPackage, agent: 'opencode', sourcePath: ocJsonPath });
   }
   const ocPluginFiles = await listFiles(path.join(ocConfigDir, 'plugins'), ['.js', '.ts']);
   for (const file of ocPluginFiles) {
     byAgent.opencode.plugins.push({
       name: file,
-      detail: '本地插件文件',
+      detail: strings.localPluginFile,
       agent: 'opencode',
       sourcePath: path.join(ocConfigDir, 'plugins', file),
     });
   }
   if (ocPluginList.length > 0 || ocPluginFiles.length > 0) {
     byAgent.opencode.hooks.push({
-      name: 'opencode hooks 由插件实现',
-      detail: '无独立 hooks 配置文件，事件在插件中订阅',
+      name: strings.opencodeHooksName,
+      detail: strings.opencodeHooksDetail,
       agent: 'opencode',
       sourcePath: ocConfigDir,
     });
   }
 
   // ---- skills（跨位置去重，按 agent 分行）----
-  for (const item of await gatherSkills(home)) {
+  for (const item of await gatherSkills(home, strings)) {
     byAgent[item.agent].skills.push(item);
   }
 
@@ -259,7 +283,7 @@ export async function gatherSettings(serverLabel: string, homeDir?: string): Pro
     0,
   );
   if (total === 0) {
-    data.notes.push('在当前服务器上未找到任何 agent 配置（MCP / Skills / Plugins / Hooks）');
+    data.notes.push(strings.noConfigFound);
   }
   return data;
 }

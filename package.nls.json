@@ -1,0 +1,19 @@
+{
+  "view.container.title": "Agent Workspace",
+  "view.workspace.name": "Workspace",
+  "view.settings.name": "Agent Settings",
+  "config.title": "Agent Workspace",
+  "config.servers.description": "Remote servers. Each entry: `{ name, host, user?, port? }`. `host` may be an alias from ~/.ssh/config.",
+  "config.sessionLimit.description": "Max sessions scanned per agent per server (most recently updated first).",
+  "config.connectInNewWindow.description": "Open the remote server in a new window when connecting (default: reuse the current window).",
+  "cmd.refresh": "Refresh",
+  "cmd.addServer": "Add Server",
+  "cmd.removeServer": "Remove Server",
+  "cmd.connect": "Connect to This Server",
+  "cmd.connectTerminal": "Open SSH Terminal",
+  "cmd.openSession": "Open Transcript",
+  "cmd.resumeSession": "Resume in Terminal",
+  "cmd.copySessionId": "Copy Session ID",
+  "cmd.openSettings": "Open Agent Settings",
+  "welcome.content": "Expand the current server to browse its files and agent sessions.\n[Add a remote server](command:agentWorkspace.addServer) to browse opencode / Codex / Claude Code sessions on other machines without switching windows."
+}

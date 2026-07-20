@@ -2,9 +2,11 @@ import * as vscode from 'vscode';
 import { WorkspaceProvider } from './tree/workspaceProvider';
 import { SessionDecorationProvider } from './tree/sessionDecorations';
 import { SettingsViewProvider } from './views/settingsView';
+import { SessionPanel } from './views/sessionPanel';
 import { registerCommands } from './commands';
 
 export function activate(context: vscode.ExtensionContext): { provider: WorkspaceProvider; decorations: SessionDecorationProvider } {
+  SessionPanel.init(context.extensionUri);
   const provider = new WorkspaceProvider();
   const tree = vscode.window.createTreeView('agentWorkspace.workspace', {
     treeDataProvider: provider,

@@ -2,6 +2,7 @@ import * as vscode from 'vscode';
 import type { SessionStore } from './workspaceProvider';
 import { CURRENT_SERVER_KEY } from './workspaceProvider';
 import { isUnder, realpathSafe } from '../paths';
+import { t } from '../i18n';
 
 /**
  * 在内置资源管理器（及本扩展的文件节点）上，为包含 agent 会话的目录加 AI 徽标。
@@ -53,7 +54,7 @@ export class SessionDecorationProvider implements vscode.FileDecorationProvider 
     }
     return {
       badge: 'AI',
-      tooltip: `该目录下有 ${count} 个 agent 会话（见 Agent Workspace 视图）`,
+      tooltip: t('{0} agent sessions under this directory (see Agent Workspace view)', count),
       color: new vscode.ThemeColor('charts.blue'),
       propagate: false,
     };

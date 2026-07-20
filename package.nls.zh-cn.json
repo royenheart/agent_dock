@@ -1,0 +1,19 @@
+{
+  "view.container.title": "Agent Workspace",
+  "view.workspace.name": "Workspace",
+  "view.settings.name": "Agent 设置",
+  "config.title": "Agent Workspace",
+  "config.servers.description": "远程服务器列表。每项: `{ name, host, user?, port? }`。host 可以是 ~/.ssh/config 里的别名。",
+  "config.sessionLimit.description": "每台服务器每个 agent 最多扫描的会话数（按最近更新排序）。",
+  "config.connectInNewWindow.description": "Connect 命令在新窗口中打开远程服务器（默认复用当前窗口）。",
+  "cmd.refresh": "刷新",
+  "cmd.addServer": "添加服务器",
+  "cmd.removeServer": "移除服务器",
+  "cmd.connect": "连接到此服务器",
+  "cmd.connectTerminal": "打开 SSH 终端",
+  "cmd.openSession": "查看对话记录",
+  "cmd.resumeSession": "在终端中继续会话",
+  "cmd.copySessionId": "复制会话 ID",
+  "cmd.openSettings": "打开 Agent 设置",
+  "welcome.content": "展开「当前」节点查看本机/当前服务器的文件与 agent 会话。\n[添加远程服务器](command:agentWorkspace.addServer) 后，无需切换窗口即可浏览其他服务器的 opencode / Codex / Claude Code 会话。"
+}

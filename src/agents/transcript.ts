@@ -1,7 +1,30 @@
-import type { AgentSession, ChatMessage } from '../model';
+import type { AgentSession, RenderBlock } from '../model';
 
 const MAX_TEXT = 20_000;
-const TOOL_INPUT_PREVIEW = 400;
+const TOOL_INPUT_PREVIEW = 600;
+const TOOL_OUTPUT_PREVIEW = 4_000;
+
+export interface TranscriptStrings {
+  compactSummary: string;
+  truncatedNotice: string;
+  compactBoundary: string;
+  redactedThinking: string;
+  filesChanged: string;
+  attachment: string;
+  subtask: string;
+}
+
+const DEFAULT_STRINGS: TranscriptStrings = {
+  compactSummary: '(compacted context summary — skipped)',
+  truncatedNotice: 'Session file is large; showing the last 6 MiB only (earlier messages not loaded)',
+  compactBoundary: '— context compacted —',
+  redactedThinking: '(redacted thinking)',
+  filesChanged: 'files changed',
+  attachment: 'attachment',
+  subtask: 'subtask',
+};
+
+type ToolBlock = Extract<RenderBlock, { kind: 'tool' }>;
 
 function truncate(text: string, max: number): string {
   return text.length > max ? `${text.slice(0, max)}\n… (truncated)` : text;
@@ -23,17 +46,20 @@ function textFromContent(content: unknown): string {
   return '';
 }
 
-function jsonLines(text: string): unknown[] {
-  const out: unknown[] = [];
+function jsonLines(text: string): Record<string, unknown>[] {
+  const out: Record<string, unknown>[] = [];
   for (const line of text.split('\n')) {
     const t = line.trim();
     if (!t) {
       continue;
     }
     try {
-      out.push(JSON.parse(t));
+      const parsed: unknown = JSON.parse(t);
+      if (parsed && typeof parsed === 'object') {
+        out.push(parsed as Record<string, unknown>);
+      }
     } catch {
-      // partial line (truncated tail) — skip
+      // 截断的尾行 —— 跳过
     }
   }
   return out;
@@ -49,135 +75,215 @@ function brief(value: unknown, max: number): string {
   return s.length > max ? `${s.slice(0, max)}…` : s;
 }
 
+function tsOf(value: unknown): number | undefined {
+  if (typeof value !== 'string') {
+    return undefined;
+  }
+  const t = Date.parse(value);
+  return Number.isNaN(t) ? undefined : t;
+}
+
+function pushTodoItems(out: RenderBlock[], raw: unknown, ts?: number): void {
+  if (!Array.isArray(raw)) {
+    return;
+  }
+  const items = raw
+    .map((x) => {
+      const r = x as Record<string, unknown>;
+      return { content: String(r?.content ?? r?.subject ?? r?.step ?? ''), status: String(r?.status ?? 'pending') };
+    })
+    .filter((i) => i.content);
+  if (items.length > 0) {
+    out.push({ kind: 'todo', items, ts });
+  }
+}
+
 // ---------------- claude ----------------
 
-export function renderClaudeTranscript(jsonl: string): ChatMessage[] {
-  const out: ChatMessage[] = [];
-  for (const rec of jsonLines(jsonl)) {
-    if (!rec || typeof rec !== 'object') {
-      continue;
-    }
-    const d = rec as Record<string, unknown>;
-    const ts = typeof d.timestamp === 'string' ? Date.parse(d.timestamp) : undefined;
+export function renderClaudeTranscript(jsonl: string, strings: TranscriptStrings = DEFAULT_STRINGS): RenderBlock[] {
+  const out: RenderBlock[] = [];
+  const pendingTools = new Map<string, ToolBlock>();
+  for (const d of jsonLines(jsonl)) {
+    const ts = tsOf(d.timestamp);
     const msg = d.message as Record<string, unknown> | undefined;
     if (d.type === 'user') {
       if (d.isCompactSummary) {
-        out.push({ role: 'system', text: '（上下文压缩摘要，已跳过）', timestamp: ts });
+        out.push({ kind: 'notice', text: strings.compactSummary, ts });
         continue;
       }
       const content = msg?.content;
-      if (Array.isArray(content)) {
-        // split text vs tool_result blocks
-        const texts: string[] = [];
-        for (const block of content) {
-          if (!block || typeof block !== 'object') {
-            continue;
+      const blocks = Array.isArray(content) ? content : [{ type: 'text', text: typeof content === 'string' ? content : '' }];
+      const texts: string[] = [];
+      for (const raw of blocks) {
+        if (!raw || typeof raw !== 'object') {
+          continue;
+        }
+        const b = raw as Record<string, unknown>;
+        if (b.type === 'text' && typeof b.text === 'string') {
+          texts.push(b.text);
+        } else if (b.type === 'tool_result') {
+          const output = truncate(textFromContent(b.content) || brief(b.content, TOOL_INPUT_PREVIEW), TOOL_OUTPUT_PREVIEW);
+          const pending = typeof b.tool_use_id === 'string' ? pendingTools.get(b.tool_use_id) : undefined;
+          if (pending) {
+            pending.output = output;
+            pending.isError = b.is_error === true;
+            pendingTools.delete(String(b.tool_use_id));
+          } else {
+            out.push({ kind: 'tool', name: 'tool_result', input: '', output, isError: b.is_error === true, ts });
           }
-          const b = block as Record<string, unknown>;
-          if (b.type === 'text' && typeof b.text === 'string') {
-            texts.push(b.text);
-          } else if (b.type === 'tool_result') {
-            out.push({
-              role: 'tool',
-              toolName: 'tool_result',
-              text: truncate(textFromContent(b.content) || brief(b.content, TOOL_INPUT_PREVIEW), MAX_TEXT),
-              timestamp: ts,
-            });
-          }
         }
-        const t = texts.join('\n').trim();
-        if (t) {
-          out.push({ role: 'user', text: truncate(t, MAX_TEXT), timestamp: ts });
-        }
-      } else {
-        const t = textFromContent(content).trim();
-        if (t) {
-          out.push({ role: 'user', text: truncate(t, MAX_TEXT), timestamp: ts });
-        }
+      }
+      const t = texts.join('\n').trim();
+      if (t) {
+        out.push({ kind: 'text', role: 'user', markdown: truncate(t, MAX_TEXT), ts });
       }
     } else if (d.type === 'assistant') {
       const content = msg?.content;
       if (!Array.isArray(content)) {
         continue;
       }
-      for (const block of content) {
-        if (!block || typeof block !== 'object') {
+      for (const raw of content) {
+        if (!raw || typeof raw !== 'object') {
           continue;
         }
-        const b = block as Record<string, unknown>;
+        const b = raw as Record<string, unknown>;
         if (b.type === 'text' && typeof b.text === 'string' && b.text.trim()) {
-          out.push({ role: 'assistant', text: truncate(b.text, MAX_TEXT), timestamp: ts });
+          out.push({ kind: 'text', role: 'assistant', markdown: truncate(b.text, MAX_TEXT), ts });
         } else if (b.type === 'thinking' && typeof b.thinking === 'string' && b.thinking.trim()) {
-          out.push({ role: 'system', text: `💭 ${truncate(b.thinking, 600)}`, timestamp: ts });
+          out.push({ kind: 'thinking', text: truncate(b.thinking, MAX_TEXT), ts });
+        } else if (b.type === 'redacted_thinking') {
+          out.push({ kind: 'thinking', text: strings.redactedThinking, ts });
         } else if (b.type === 'tool_use') {
-          out.push({
-            role: 'tool',
-            toolName: typeof b.name === 'string' ? b.name : 'tool',
-            text: brief(b.input, TOOL_INPUT_PREVIEW),
-            timestamp: ts,
-          });
+          if (b.name === 'TodoWrite') {
+            pushTodoItems(out, (b.input as Record<string, unknown> | undefined)?.todos, ts);
+            continue;
+          }
+          const block: ToolBlock = {
+            kind: 'tool',
+            name: String(b.name ?? 'tool'),
+            input: brief(b.input, TOOL_INPUT_PREVIEW),
+            ts,
+          };
+          out.push(block);
+          if (typeof b.id === 'string') {
+            pendingTools.set(b.id, block);
+          }
         }
       }
+    } else if (d.type === 'system' && d.subtype === 'compact_boundary') {
+      out.push({ kind: 'notice', text: strings.compactBoundary, ts });
     }
-    // summary/system/progress/file-history records are skipped
   }
   return out;
 }
 
 // ---------------- codex ----------------
 
-export function renderCodexTranscript(jsonl: string): ChatMessage[] {
-  const out: ChatMessage[] = [];
-  for (const rec of jsonLines(jsonl)) {
-    if (!rec || typeof rec !== 'object') {
-      continue;
+function functionOutputText(output: unknown): string {
+  if (typeof output === 'string') {
+    return output;
+  }
+  if (output && typeof output === 'object') {
+    const o = output as Record<string, unknown>;
+    if (typeof o.content === 'string') {
+      return o.content;
     }
-    const d = rec as Record<string, unknown>;
+    if (Array.isArray(o.content_items)) {
+      return textFromContent(o.content_items);
+    }
+  }
+  return brief(output, TOOL_INPUT_PREVIEW);
+}
+
+export function renderCodexTranscript(jsonl: string, strings: TranscriptStrings = DEFAULT_STRINGS): RenderBlock[] {
+  void strings;
+  const out: RenderBlock[] = [];
+  const pendingTools = new Map<string, ToolBlock>();
+  for (const d of jsonLines(jsonl)) {
     const p = d.payload as Record<string, unknown> | undefined;
     if (!p) {
       continue;
     }
-    const ts = typeof p.timestamp === 'string' ? Date.parse(p.timestamp) : undefined;
-
+    const ts = tsOf(d.timestamp) ?? tsOf(p.timestamp);
     if (d.type === 'response_item') {
       if (p.type === 'message' && (p.role === 'user' || p.role === 'assistant')) {
-        const t = textFromContent(p.content).trim();
+        const text = textFromContent(p.content).trim();
         const isCodexEnvelope =
-          p.role === 'user' && (t.startsWith('<environment_context>') || t.startsWith('<user_instructions>'));
-        if (t && !isCodexEnvelope) {
-          out.push({ role: p.role, text: truncate(t, MAX_TEXT), timestamp: ts });
+          p.role === 'user' && (text.startsWith('<environment_context>') || text.startsWith('<user_instructions>'));
+        if (text && !isCodexEnvelope) {
+          out.push({ kind: 'text', role: p.role, markdown: truncate(text, MAX_TEXT), ts });
         }
-      } else if (p.type === 'function_call') {
-        out.push({
-          role: 'tool',
-          toolName: typeof p.name === 'string' ? p.name : 'function_call',
-          text: brief(p.arguments, TOOL_INPUT_PREVIEW),
-          timestamp: ts,
-        });
-      } else if (p.type === 'local_shell_call') {
-        const action = p.action as Record<string, unknown> | undefined;
-        const cmd = Array.isArray(action?.command) ? (action.command as unknown[]).join(' ') : brief(p, TOOL_INPUT_PREVIEW);
-        out.push({ role: 'tool', toolName: 'shell', text: truncate(cmd, TOOL_INPUT_PREVIEW), timestamp: ts });
-      } else if (p.type === 'function_call_output') {
-        const output = typeof p.output === 'string' ? p.output : brief(p.output, TOOL_INPUT_PREVIEW);
-        out.push({ role: 'tool', toolName: 'output', text: truncate(output, 2_000), timestamp: ts });
       } else if (p.type === 'reasoning') {
         const summary = Array.isArray(p.summary) ? textFromContent(p.summary) : '';
         if (summary.trim()) {
-          out.push({ role: 'system', text: `💭 ${truncate(summary, 600)}`, timestamp: ts });
+          out.push({ kind: 'thinking', text: truncate(summary, MAX_TEXT), ts });
         }
+      } else if (p.type === 'function_call' || p.type === 'custom_tool_call') {
+        const block: ToolBlock = {
+          kind: 'tool',
+          name: String(p.name ?? 'function'),
+          input: brief(p.arguments ?? p.input, TOOL_INPUT_PREVIEW),
+          ts,
+        };
+        out.push(block);
+        if (typeof p.call_id === 'string') {
+          pendingTools.set(p.call_id, block);
+        }
+      } else if (p.type === 'function_call_output' || p.type === 'custom_tool_call_output') {
+        const output = truncate(functionOutputText(p.output), TOOL_OUTPUT_PREVIEW);
+        const pending = typeof p.call_id === 'string' ? pendingTools.get(p.call_id) : undefined;
+        if (pending) {
+          pending.output = output;
+          pendingTools.delete(String(p.call_id));
+        } else {
+          out.push({ kind: 'tool', name: 'output', input: '', output, ts });
+        }
+      } else if (p.type === 'local_shell_call') {
+        const action = p.action as Record<string, unknown> | undefined;
+        const cmd = Array.isArray(action?.command) ? (action.command as unknown[]).join(' ') : brief(action, TOOL_INPUT_PREVIEW);
+        out.push({ kind: 'tool', name: 'shell', input: truncate(cmd, TOOL_INPUT_PREVIEW), ts });
+      } else if (p.type === 'web_search_call') {
+        const action = p.action as Record<string, unknown> | undefined;
+        out.push({ kind: 'tool', name: 'web_search', input: String(action?.query ?? brief(action, 200)), ts });
       }
     } else if (d.type === 'event_msg') {
-      // legacy rollout format
       if (p.type === 'user_message' && typeof p.message === 'string' && p.message.trim()) {
-        out.push({ role: 'user', text: truncate(p.message, MAX_TEXT), timestamp: ts });
+        out.push({ kind: 'text', role: 'user', markdown: truncate(p.message, MAX_TEXT), ts });
       } else if (p.type === 'agent_message' && typeof p.message === 'string' && p.message.trim()) {
-        out.push({ role: 'assistant', text: truncate(p.message, MAX_TEXT), timestamp: ts });
+        out.push({ kind: 'text', role: 'assistant', markdown: truncate(p.message, MAX_TEXT), ts });
       } else if (p.type === 'agent_reasoning' && typeof p.text === 'string' && p.text.trim()) {
-        out.push({ role: 'system', text: `💭 ${truncate(p.text, 600)}`, timestamp: ts });
+        out.push({ kind: 'thinking', text: truncate(p.text, MAX_TEXT), ts });
+      } else if (p.type === 'exec_command_begin') {
+        const cmd = Array.isArray(p.command) ? (p.command as unknown[]).join(' ') : brief(p.command, TOOL_INPUT_PREVIEW);
+        const block: ToolBlock = { kind: 'tool', name: 'shell', input: truncate(cmd, TOOL_INPUT_PREVIEW), ts };
+        out.push(block);
+        if (typeof p.call_id === 'string') {
+          pendingTools.set(p.call_id, block);
+        }
+      } else if (p.type === 'exec_command_end') {
+        const output = truncate(
+          String(p.aggregated_output ?? `${p.stdout ?? ''}${p.stderr ?? ''}`),
+          TOOL_OUTPUT_PREVIEW,
+        );
+        const pending = typeof p.call_id === 'string' ? pendingTools.get(p.call_id) : undefined;
+        const isError = typeof p.exit_code === 'number' && p.exit_code !== 0;
+        if (pending) {
+          pending.output = output;
+          pending.isError = isError;
+          pendingTools.delete(String(p.call_id));
+        } else {
+          out.push({ kind: 'tool', name: 'shell output', input: '', output, isError, ts });
+        }
+      } else if (p.type === 'plan_update') {
+        pushTodoItems(out, p.plan, ts);
+      } else if (p.type === 'patch_apply_end') {
+        const changes = p.changes as Record<string, unknown> | undefined;
+        const files = changes ? Object.keys(changes) : [];
+        if (files.length > 0) {
+          out.push({ kind: 'files', label: strings.filesChanged, files, ts });
+        }
       }
     }
-    // turn_context / session_meta / compacted records are skipped
   }
   return out;
 }
@@ -185,16 +291,18 @@ export function renderCodexTranscript(jsonl: string): ChatMessage[] {
 // ---------------- opencode ----------------
 
 interface OpencodeDump {
-  messages: [string, string][];
-  parts: [string, string][];
+  messages?: [string, string][];
+  parts?: [string, string][];
+  todos?: [string, unknown, unknown][];
+  v2?: [string, string][];
 }
 
-export function renderOpencodeTranscript(stdout: string): ChatMessage[] {
+function splitTranscriptSections(stdout: string): Map<string, string> {
   const sections = new Map<string, string>();
   let current: string | null = null;
   let buf: string[] = [];
   for (const line of stdout.split('\n')) {
-    const m = /^===AGENTWS:(json|messages|parts|error|full|truncated)===$/.exec(line);
+    const m = /^===AGENTWS:(json|messages|parts|todos|error|full|truncated)===$/.exec(line);
     if (m) {
       if (current !== null) {
         sections.set(current, buf.join('\n'));
@@ -208,84 +316,148 @@ export function renderOpencodeTranscript(stdout: string): ChatMessage[] {
   if (current !== null) {
     sections.set(current, buf.join('\n'));
   }
+  return sections;
+}
 
-  let messages: [string, string][] = [];
-  let parts: [string, string][] = [];
+function renderOpencodeToolPart(part: Record<string, unknown>, ts: number | undefined): ToolBlock {
+  const state = (part.state ?? {}) as Record<string, unknown>;
+  const status = typeof state.status === 'string' ? state.status : undefined;
+  return {
+    kind: 'tool',
+    name: String(part.tool ?? 'tool'),
+    input: brief(state.input ?? part.input, TOOL_INPUT_PREVIEW),
+    output:
+      typeof state.output === 'string'
+        ? truncate(state.output, TOOL_OUTPUT_PREVIEW)
+        : typeof state.error === 'string'
+          ? truncate(state.error, TOOL_OUTPUT_PREVIEW)
+          : undefined,
+    isError: status === 'error',
+    status,
+    ts,
+  };
+}
 
+export function renderOpencodeTranscript(stdout: string, strings: TranscriptStrings = DEFAULT_STRINGS): RenderBlock[] {
+  const sections = splitTranscriptSections(stdout);
+  let dump: OpencodeDump = {};
   const jsonSection = sections.get('json');
-  if (jsonSection) {
+  if (jsonSection && jsonSection.trim()) {
     try {
-      const dump = JSON.parse(jsonSection.trim()) as OpencodeDump;
-      messages = dump.messages ?? [];
-      parts = dump.parts ?? [];
+      dump = JSON.parse(jsonSection.trim()) as OpencodeDump;
     } catch {
-      // fall through to empty
+      dump = {};
     }
   } else {
-    const parseRows = (text: string | undefined): [string, string][] => {
+    const parseRows = (text: string | undefined, keyField: string): [string, string][] => {
       if (!text) {
         return [];
       }
       try {
         const rows = JSON.parse(text.trim()) as Record<string, unknown>[];
         return rows
-          .map((r) => [String(r.id ?? r.message_id ?? ''), String(r.data ?? '{}')] as [string, string])
+          .map((r) => [String(r[keyField] ?? ''), String(r.data ?? '')] as [string, string])
           .filter((row) => row[0] !== '');
       } catch {
         return [];
       }
     };
-    messages = parseRows(sections.get('messages'));
-    parts = parseRows(sections.get('parts'));
+    dump.messages = parseRows(sections.get('messages'), 'id');
+    dump.parts = parseRows(sections.get('parts'), 'message_id');
+    try {
+      const rows = JSON.parse((sections.get('todos') ?? '').trim() || '[]') as Record<string, unknown>[];
+      dump.todos = rows.map((r) => [String(r.content ?? ''), r.status, r.priority]);
+    } catch {
+      dump.todos = [];
+    }
   }
 
+  const out: RenderBlock[] = [];
   const partsByMessage = new Map<string, Record<string, unknown>[]>();
-  for (const [messageId, dataStr] of parts) {
+  for (const [messageId, dataStr] of dump.parts ?? []) {
     try {
       const data = JSON.parse(dataStr) as Record<string, unknown>;
       const list = partsByMessage.get(messageId) ?? [];
       list.push(data);
       partsByMessage.set(messageId, list);
     } catch {
-      // skip malformed part
+      // 跳过畸形 part
     }
   }
 
-  const out: ChatMessage[] = [];
-  for (const [id, dataStr] of messages) {
+  for (const [id, dataStr] of dump.messages ?? []) {
     let data: Record<string, unknown>;
     try {
       data = JSON.parse(dataStr) as Record<string, unknown>;
     } catch {
       continue;
     }
-    const role = data.role === 'user' || data.role === 'assistant' ? data.role : 'assistant';
+    const role = data.role === 'user' ? 'user' : 'assistant';
     const time = data.time as Record<string, unknown> | undefined;
-    const ts = typeof time?.created === 'number' ? (time.created as number) : undefined;
+    const ts = typeof time?.created === 'number' ? time.created : undefined;
     for (const part of partsByMessage.get(id) ?? []) {
-      const ptype = part.type;
-      if (ptype === 'text' && typeof part.text === 'string' && part.text.trim()) {
-        out.push({ role, text: truncate(part.text, MAX_TEXT), timestamp: ts });
-      } else if (ptype === 'reasoning' && typeof part.text === 'string' && part.text.trim()) {
-        out.push({ role: 'system', text: `💭 ${truncate(part.text, 600)}`, timestamp: ts });
-      } else if (ptype === 'tool') {
-        const state = part.state as Record<string, unknown> | undefined;
-        const input = state?.input ?? part.input;
-        out.push({
-          role: 'tool',
-          toolName: typeof part.tool === 'string' ? part.tool : 'tool',
-          text: brief(input, TOOL_INPUT_PREVIEW),
-          timestamp: ts,
-        });
+      if (part.type === 'text' && typeof part.text === 'string' && part.text.trim()) {
+        out.push({ kind: 'text', role, markdown: truncate(part.text, MAX_TEXT), ts });
+      } else if (part.type === 'reasoning' && typeof part.text === 'string' && part.text.trim()) {
+        out.push({ kind: 'thinking', text: truncate(part.text, MAX_TEXT), ts });
+      } else if (part.type === 'tool') {
+        out.push(renderOpencodeToolPart(part, ts));
+      } else if (part.type === 'patch' && Array.isArray(part.files) && part.files.length > 0) {
+        out.push({ kind: 'files', label: strings.filesChanged, files: part.files.map(String), ts });
+      } else if (part.type === 'file' && typeof part.filename === 'string') {
+        out.push({ kind: 'notice', text: `${strings.attachment}: ${part.filename}`, ts });
+      } else if (part.type === 'subtask') {
+        out.push({ kind: 'notice', text: `${strings.subtask}: ${String(part.description ?? part.agent ?? '')}`, ts });
       }
     }
+  }
+
+  if (out.length === 0 && dump.v2 && dump.v2.length > 0) {
+    for (const [type, dataStr] of dump.v2) {
+      let data: Record<string, unknown>;
+      try {
+        data = JSON.parse(dataStr) as Record<string, unknown>;
+      } catch {
+        continue;
+      }
+      const time = data.time as Record<string, unknown> | undefined;
+      const ts = typeof time?.created === 'number' ? time.created : undefined;
+      if (type === 'user' || type === 'assistant') {
+        const content = Array.isArray(data.content) ? data.content : [];
+        for (const raw of content) {
+          if (!raw || typeof raw !== 'object') {
+            continue;
+          }
+          const c = raw as Record<string, unknown>;
+          if (c.type === 'text' && typeof c.text === 'string' && c.text.trim()) {
+            out.push({ kind: 'text', role: type, markdown: truncate(c.text, MAX_TEXT), ts });
+          } else if (c.type === 'reasoning' && typeof c.text === 'string' && c.text.trim()) {
+            out.push({ kind: 'thinking', text: truncate(c.text, MAX_TEXT), ts });
+          } else if (c.type === 'tool') {
+            out.push(renderOpencodeToolPart(c, ts));
+          }
+        }
+      } else if (type === 'compaction') {
+        out.push({ kind: 'notice', text: strings.compactBoundary, ts });
+      } else if (type === 'shell') {
+        out.push({ kind: 'tool', name: 'shell', input: brief(data.command ?? data, TOOL_INPUT_PREVIEW), ts });
+      } else {
+        out.push({ kind: 'notice', text: type, ts });
+      }
+    }
+  }
+
+  const todos = (dump.todos ?? [])
+    .map((row) => ({ content: String(row[0] ?? ''), status: String(row[1] ?? 'pending') }))
+    .filter((i) => i.content);
+  if (todos.length > 0) {
+    out.push({ kind: 'todo', items: todos });
   }
   return out;
 }
 
 // ---------------- dispatch ----------------
 
-/** Strip the leading ===AGENTWS:full===/===AGENTWS:truncated=== marker line. */
 function stripLeadMarker(stdout: string): { body: string; truncated: boolean } {
   const firstNl = stdout.indexOf('\n');
   const first = firstNl >= 0 ? stdout.slice(0, firstNl) : stdout;
@@ -298,17 +470,19 @@ function stripLeadMarker(stdout: string): { body: string; truncated: boolean } {
   return { body: stdout, truncated: false };
 }
 
-export function renderTranscript(session: AgentSession, stdout: string): ChatMessage[] {
+export function renderTranscript(
+  session: AgentSession,
+  stdout: string,
+  strings: TranscriptStrings = DEFAULT_STRINGS,
+): RenderBlock[] {
   if (session.agent === 'opencode') {
-    return renderOpencodeTranscript(stdout);
+    return renderOpencodeTranscript(stdout, strings);
   }
   const { body, truncated } = stripLeadMarker(stdout);
-  const msgs = session.agent === 'claude' ? renderClaudeTranscript(body) : renderCodexTranscript(body);
+  const blocks =
+    session.agent === 'claude' ? renderClaudeTranscript(body, strings) : renderCodexTranscript(body, strings);
   if (truncated) {
-    msgs.unshift({
-      role: 'system',
-      text: '⚠️ 会话文件过大，仅显示末尾 6 MiB 内容（早期消息未加载）',
-    });
+    blocks.unshift({ kind: 'notice', text: strings.truncatedNotice });
   }
-  return msgs;
+  return blocks;
 }

@@ -7,6 +7,7 @@ import { readSshConfigHosts, type SshHostEntry } from './ssh/sshConfig';
 import { SessionPanel, type SessionTarget } from './views/sessionPanel';
 import type { Node, WorkspaceProvider } from './tree/workspaceProvider';
 import { CURRENT_SERVER_KEY } from './tree/workspaceProvider';
+import { t } from './i18n';
 
 type ServerNode = Extract<Node, { kind: 'server' }>;
 type SessionNode = Extract<Node, { kind: 'session' }>;
@@ -14,13 +15,12 @@ type SessionNode = Extract<Node, { kind: 'session' }>;
 function sessionTarget(node: SessionNode): SessionTarget | undefined {
   const servers = getServers();
   const server = node.serverKey === CURRENT_SERVER_KEY ? undefined : servers.find((s) => s.name === node.serverKey);
-  // 当前窗口可能连接的是配置里的某台服务器——此时"当前"节点用本地执行
   if (node.serverKey !== CURRENT_SERVER_KEY && !server) {
     return undefined;
   }
   const serverLabel = server
     ? `${server.user ? `${server.user}@` : ''}${server.host}${server.port ? `:${server.port}` : ''}`
-    : '当前服务器';
+    : t('Current server');
   return { serverKey: node.serverKey, server, serverLabel, session: node.session };
 }
 
@@ -44,8 +44,8 @@ async function connectToServer(server: ServerConfig): Promise<void> {
   const sshExt = vscode.extensions.getExtension('ms-vscode-remote.remote-ssh');
   if (!sshExt) {
     const choice = await vscode.window.showInformationMessage(
-      '连接远程服务器需要安装 Remote-SSH 扩展',
-      '安装 Remote-SSH',
+      t('Connecting to remote servers requires the Remote-SSH extension'),
+      t('Install Remote-SSH'),
     );
     if (choice) {
       await vscode.env.openExternal(vscode.Uri.parse('vscode:extension/ms-vscode-remote.remote-ssh'));
@@ -61,79 +61,47 @@ async function connectToServer(server: ServerConfig): Promise<void> {
 
 function validateServerName(v: string): string | undefined {
   if (!v.trim()) {
-    return '名称不能为空';
+    return t('Name is required');
   }
   if (getServers().some((s) => s.name === v.trim())) {
-    return '名称已存在';
+    return t('Name already exists');
   }
   return undefined;
 }
 
-async function saveServer(server: ServerConfig, provider: WorkspaceProvider, hint: string): Promise<void> {
+async function saveServer(server: ServerConfig, provider: WorkspaceProvider): Promise<void> {
   await addServer(server);
   provider.refresh();
-  vscode.window.showInformationMessage(`已添加服务器 ${server.name}${hint}`);
+  vscode.window.showInformationMessage(t('Server {0} added', server.name));
 }
 
-async function addServerFlow(provider: WorkspaceProvider): Promise<void> {
-  interface HostPick extends vscode.QuickPickItem {
-    entry?: SshHostEntry;
-  }
-  const ctx = getCurrentContext();
+interface HostPick extends vscode.QuickPickItem {
+  entry?: SshHostEntry;
+  manual?: boolean;
+}
+
+/** 二级选择：ssh config 主机列表 + 底部手动输入。 */
+async function pickOtherServer(isLocal: boolean, sshHost?: string): Promise<SshHostEntry | 'manual' | undefined> {
   const hosts = await readSshConfigHosts();
-  const picks: HostPick[] = [];
-
-  if (!ctx.isLocal && ctx.sshHost) {
-    const already = getServers().some((s) => hostMatches(ctx.sshHost!, s));
-    if (!already) {
-      const at = ctx.sshHost.indexOf('@');
-      picks.push({
-        label: `$(remote) 当前连接: ${ctx.sshHost}`,
-        description: '把当前服务器保存到列表',
-        entry: {
-          host: at >= 0 ? ctx.sshHost.slice(at + 1) : ctx.sshHost,
-          user: at >= 0 ? ctx.sshHost.slice(0, at) : undefined,
-        },
-      });
-      picks.push({ label: '其他服务器', kind: vscode.QuickPickItemKind.Separator });
-    }
-  }
-  for (const h of hosts) {
-    picks.push({
-      label: h.host,
-      description: [h.user ? `${h.user}@` : '', h.hostName ?? '', h.port ? `:${h.port}` : ''].join(''),
-      entry: h,
-    });
-  }
-  picks.push({ label: '$(pencil) 手动输入…', description: '不选择 ssh config 中的主机', alwaysShow: true });
-
-  const fromWhere = ctx.isLocal
-    ? '从本机 ~/.ssh/config 选择主机'
-    : `ssh 主机列表来自当前连接的 ${ctx.sshHost ?? '远程机'} 的 ~/.ssh/config（VS Code 扩展运行在远程，无法读取本机文件；需要本机列表请在本地窗口中添加）`;
-  const chosen = await vscode.window.showQuickPick(picks, {
-    placeHolder: fromWhere,
-    matchOnDescription: true,
-  });
+  const picks: HostPick[] = hosts.map((h) => ({
+    label: h.host,
+    description: [h.user ? `${h.user}@` : '', h.hostName ?? '', h.port ? `:${h.port}` : ''].join(''),
+    entry: h,
+  }));
+  picks.push({ label: `$(pencil) ${t('Enter manually…')}`, alwaysShow: true, manual: true });
+  const placeHolder = isLocal
+    ? t('Parsed from local ~/.ssh/config')
+    : t('Parsed from {0}:~/.ssh/config', sshHost ?? 'remote');
+  const chosen = await vscode.window.showQuickPick(picks, { placeHolder, matchOnDescription: true });
   if (!chosen) {
-    return;
+    return undefined;
   }
+  return chosen.manual ? 'manual' : chosen.entry;
+}
 
-  if (chosen.entry) {
-    const e = chosen.entry;
-    const name = await vscode.window.showInputBox({
-      prompt: `服务器显示名称（host: ${e.host}）`,
-      value: e.host,
-      validateInput: validateServerName,
-    });
-    if (!name) {
-      return;
-    }
-    await saveServer({ name: name.trim(), host: e.host, user: e.user, port: e.port }, provider, '（来自 ssh config）');
-    return;
-  }
-
+async function manualAddServerFlow(provider: WorkspaceProvider): Promise<void> {
   const name = await vscode.window.showInputBox({
-    prompt: '服务器显示名称（如：远程 server1）',
+    prompt: t('Server display name (e.g. "remote server1")'),
     placeHolder: 'server1',
     validateInput: validateServerName,
   });
@@ -141,20 +109,20 @@ async function addServerFlow(provider: WorkspaceProvider): Promise<void> {
     return;
   }
   const host = await vscode.window.showInputBox({
-    prompt: 'SSH 主机（~/.ssh/config 中的 Host 别名，或主机名/IP）',
-    placeHolder: '192.168.1.10 或 my-server',
-    validateInput: (v) => (v.trim() ? undefined : '主机不能为空'),
+    prompt: t('SSH host (Host alias from ~/.ssh/config, or hostname/IP)'),
+    placeHolder: '192.168.1.10 or my-server',
+    validateInput: (v) => (v.trim() ? undefined : t('Host is required')),
   });
   if (!host) {
     return;
   }
-  const user = await vscode.window.showInputBox({ prompt: 'SSH 用户名（可留空）', placeHolder: 'root' });
+  const user = await vscode.window.showInputBox({ prompt: t('SSH user (optional)'), placeHolder: 'root' });
   if (user === undefined) {
     return;
   }
   const portStr = await vscode.window.showInputBox({
-    prompt: 'SSH 端口（可留空，默认 22）',
-    validateInput: (v) => (!v || /^\d+$/.test(v.trim()) ? undefined : '端口必须是数字'),
+    prompt: t('SSH port (optional, default 22)'),
+    validateInput: (v) => (!v || /^\d+$/.test(v.trim()) ? undefined : t('Port must be a number')),
   });
   if (portStr === undefined) {
     return;
@@ -167,8 +135,57 @@ async function addServerFlow(provider: WorkspaceProvider): Promise<void> {
       port: portStr.trim() ? Number(portStr.trim()) : undefined,
     },
     provider,
-    '',
   );
+}
+
+async function confirmAndSave(entry: SshHostEntry, provider: WorkspaceProvider): Promise<void> {
+  const name = await vscode.window.showInputBox({
+    prompt: t('Server display name (host: {0})', entry.host),
+    value: entry.host,
+    validateInput: validateServerName,
+  });
+  if (!name) {
+    return;
+  }
+  await saveServer({ name: name.trim(), host: entry.host, user: entry.user, port: entry.port }, provider);
+}
+
+async function addServerFlow(provider: WorkspaceProvider): Promise<void> {
+  const ctx = getCurrentContext();
+  const currentUnsaved = !ctx.isLocal && ctx.sshHost && !getServers().some((s) => hostMatches(ctx.sshHost!, s));
+
+  // 一级：当前连接的服务器 + 底部「连接至其他服务器」
+  if (currentUnsaved && ctx.sshHost) {
+    const at = ctx.sshHost.indexOf('@');
+    const currentEntry: SshHostEntry = {
+      host: at >= 0 ? ctx.sshHost.slice(at + 1) : ctx.sshHost,
+      user: at >= 0 ? ctx.sshHost.slice(0, at) : undefined,
+    };
+    const chosen = await vscode.window.showQuickPick(
+      [
+        { label: `$(remote) ${ctx.sshHost}`, description: t('Currently connected'), entry: currentEntry },
+        { label: `$(plug) ${t('Connect to another server…')}`, alwaysShow: true, manual: true },
+      ] as HostPick[],
+      { placeHolder: t('Select a server to add') },
+    );
+    if (!chosen) {
+      return;
+    }
+    if (chosen.entry) {
+      await confirmAndSave(chosen.entry, provider);
+      return;
+    }
+  }
+
+  const picked = await pickOtherServer(ctx.isLocal, ctx.sshHost);
+  if (!picked) {
+    return;
+  }
+  if (picked === 'manual') {
+    await manualAddServerFlow(provider);
+    return;
+  }
+  await confirmAndSave(picked, provider);
 }
 
 export function registerCommands(context: vscode.ExtensionContext, provider: WorkspaceProvider): void {
@@ -185,9 +202,9 @@ export function registerCommands(context: vscode.ExtensionContext, provider: Wor
       return;
     }
     const ok = await vscode.window.showWarningMessage(
-      `确定从列表中移除服务器「${node.server.name}」？（不影响服务器本身）`,
+      t('Remove server "{0}" from the list? (The server itself is unaffected)', node.server.name),
       { modal: true },
-      '移除',
+      t('Remove'),
     );
     if (ok) {
       await removeServer(node.server.name);
@@ -228,7 +245,7 @@ export function registerCommands(context: vscode.ExtensionContext, provider: Wor
   reg('agentWorkspace.copySessionId', async (node: SessionNode) => {
     if (node?.session) {
       await vscode.env.clipboard.writeText(node.session.id);
-      vscode.window.showInformationMessage(`已复制会话 ID: ${node.session.id}`);
+      vscode.window.showInformationMessage(t('Session ID copied: {0}', node.session.id));
     }
   });
 

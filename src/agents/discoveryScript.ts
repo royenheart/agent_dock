@@ -66,6 +66,8 @@ export function buildTranscriptScript(session: AgentSession): string {
     `"$SQ3" -json "$OCDB" "SELECT id,data FROM message WHERE session_id='${sid}' ORDER BY time_created,id;" 2>/dev/null`,
     'echo "===AGENTWS:parts==="',
     `"$SQ3" -json "$OCDB" "SELECT message_id,data FROM part WHERE session_id='${sid}' ORDER BY time_created,id;" 2>/dev/null`,
+    'echo "===AGENTWS:todos==="',
+    `"$SQ3" -json "$OCDB" "SELECT content,status,priority FROM todo WHERE session_id='${sid}' ORDER BY position;" 2>/dev/null`,
     'else',
     'echo "===AGENTWS:error==="',
     'echo "python3 or sqlite3 is required on the server to read opencode sessions"',
@@ -78,9 +80,23 @@ import sqlite3, json, sys
 db = sys.argv[1]
 sid = sys.argv[2]
 con = sqlite3.connect("file:%s?mode=ro" % db, uri=True)
-msgs = con.execute("SELECT id,data FROM message WHERE session_id=? ORDER BY time_created,id", (sid,)).fetchall()
-parts = con.execute("SELECT message_id,data FROM part WHERE session_id=? ORDER BY time_created,id", (sid,)).fetchall()
-print(json.dumps({"messages": msgs, "parts": parts}))
+out = {"messages": [], "parts": [], "todos": [], "v2": []}
+try:
+    out["messages"] = con.execute("SELECT id,data FROM message WHERE session_id=? ORDER BY time_created,id", (sid,)).fetchall()
+    out["parts"] = con.execute("SELECT message_id,data FROM part WHERE session_id=? ORDER BY time_created,id", (sid,)).fetchall()
+except Exception:
+    pass
+try:
+    out["todos"] = con.execute("SELECT content,status,priority FROM todo WHERE session_id=? ORDER BY position", (sid,)).fetchall()
+except Exception:
+    pass
+tables = [r[0] for r in con.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()]
+if not out["messages"] and "session_message" in tables:
+    try:
+        out["v2"] = con.execute("SELECT type,data FROM session_message WHERE session_id=? ORDER BY seq", (sid,)).fetchall()
+    except Exception:
+        pass
+print(json.dumps(out))
 `.trim();
 
 // NOTE: the python below deliberately uses no f-strings, no backslashes and no

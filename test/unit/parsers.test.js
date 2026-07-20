@@ -1,8 +1,5 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const fs = require('node:fs');
-const os = require('node:os');
-const path = require('node:path');
 const { parseDiscoveryOutput } = require('../../out/agents/parse');
 const { renderClaudeTranscript, renderCodexTranscript, renderOpencodeTranscript } = require('../../out/agents/transcript');
 
@@ -74,33 +71,60 @@ test('parse: codex title falls back to first real user message, skipping envelop
   assert.equal(sessions[0].title, '真正的问题');
 });
 
-test('transcript: claude renders roles and tools', () => {
+test('claude: tool_use pairs with tool_result; TodoWrite becomes todo block', () => {
   const lines = [
     { type: 'summary', summary: 't' },
     { type: 'user', message: { content: [{ type: 'text', text: '你好' }] } },
-    { type: 'assistant', message: { content: [{ type: 'thinking', thinking: '想' }, { type: 'text', text: '回答' }, { type: 'tool_use', name: 'Read', input: { file_path: '/a' } }] } },
-    { type: 'user', message: { content: [{ type: 'tool_result', content: 'file body' }] } },
+    { type: 'assistant', message: { content: [{ type: 'thinking', thinking: '想' }, { type: 'text', text: '回答' }, { type: 'tool_use', id: 't1', name: 'Read', input: { file_path: '/a' } }, { type: 'tool_use', id: 't2', name: 'TodoWrite', input: { todos: [{ content: '步骤1', status: 'completed' }, { content: '步骤2', status: 'in_progress' }] } }] } },
+    { type: 'user', message: { content: [{ type: 'tool_result', tool_use_id: 't1', content: 'file body' }] } },
   ].map((r) => JSON.stringify(r)).join('\n');
-  const msgs = renderClaudeTranscript(lines);
-  assert.deepEqual(msgs.map((m) => m.role), ['user', 'system', 'assistant', 'tool', 'tool']);
-  assert.equal(msgs[0].text, '你好');
-  assert.equal(msgs[3].toolName, 'Read');
+  const blocks = renderClaudeTranscript(lines);
+  assert.deepEqual(blocks.map((b) => b.kind), ['text', 'thinking', 'text', 'tool', 'todo']);
+  const tool = blocks.find((b) => b.kind === 'tool');
+  assert.equal(tool.name, 'Read');
+  assert.equal(tool.output, 'file body');
+  assert.equal(tool.isError, false);
+  const todo = blocks.find((b) => b.kind === 'todo');
+  assert.deepEqual(todo.items, [
+    { content: '步骤1', status: 'completed' },
+    { content: '步骤2', status: 'in_progress' },
+  ]);
 });
 
-test('transcript: codex filters environment_context user envelopes', () => {
+test('claude: compact boundary and compact summary are notices', () => {
+  const lines = [
+    { type: 'user', message: { content: [{ type: 'text', text: '问题' }] } },
+    { type: 'system', subtype: 'compact_boundary' },
+    { type: 'user', isCompactSummary: true, message: { content: [{ type: 'text', text: 'long summary' }] } },
+  ].map((r) => JSON.stringify(r)).join('\n');
+  const blocks = renderClaudeTranscript(lines);
+  assert.deepEqual(blocks.map((b) => b.kind), ['text', 'notice', 'notice']);
+});
+
+test('codex: function_call pairs with output; shell and plan supported', () => {
   const lines = [
     { type: 'response_item', payload: { type: 'message', role: 'user', content: [{ type: 'input_text', text: '<environment_context>x</environment_context>' }] } },
     { type: 'response_item', payload: { type: 'message', role: 'user', content: [{ type: 'input_text', text: '问题' }] } },
-    { type: 'response_item', payload: { type: 'message', role: 'assistant', content: [{ type: 'output_text', text: '回答' }] } },
-    { type: 'response_item', payload: { type: 'function_call', name: 'shell', arguments: '{"cmd":"ls"}' } },
+    { type: 'response_item', payload: { type: 'function_call', name: 'exec', call_id: 'c1', arguments: '{"cmd":"ls"}' } },
+    { type: 'response_item', payload: { type: 'function_call_output', call_id: 'c1', output: 'file1\nfile2' } },
+    { type: 'response_item', payload: { type: 'local_shell_call', action: { command: ['npm', 'run', 'build'] } } },
+    { type: 'response_item', payload: { type: 'reasoning', summary: [{ type: 'summary_text', text: '思考一下' }] } },
+    { type: 'event_msg', payload: { type: 'plan_update', plan: [{ step: '写代码', status: 'in_progress' }, { step: '测试', status: 'pending' }] } },
+    { type: 'event_msg', payload: { type: 'patch_apply_end', changes: { '/a.ts': {}, '/b.ts': {} } } },
   ].map((r) => JSON.stringify(r)).join('\n');
-  const msgs = renderCodexTranscript(lines);
-  assert.deepEqual(msgs.map((m) => m.role), ['user', 'assistant', 'tool']);
-  assert.equal(msgs[0].text, '问题');
-  assert.equal(msgs[2].toolName, 'shell');
+  const blocks = renderCodexTranscript(lines);
+  assert.deepEqual(blocks.map((b) => b.kind), ['text', 'tool', 'tool', 'thinking', 'todo', 'files']);
+  assert.equal(blocks[0].markdown, '问题');
+  const fn = blocks[1];
+  assert.equal(fn.name, 'exec');
+  assert.equal(fn.output, 'file1\nfile2');
+  assert.equal(blocks[2].name, 'shell');
+  assert.equal(blocks[2].input, 'npm run build');
+  assert.deepEqual(blocks[4].items.map((i) => i.content), ['写代码', '测试']);
+  assert.deepEqual(blocks[5].files, ['/a.ts', '/b.ts']);
 });
 
-test('transcript: opencode stitches messages and parts', () => {
+test('opencode: tool state, todos and v2 fallback', () => {
   const dump = {
     messages: [
       ['m1', JSON.stringify({ role: 'user', time: { created: 1 } })],
@@ -109,11 +133,36 @@ test('transcript: opencode stitches messages and parts', () => {
     parts: [
       ['m1', JSON.stringify({ type: 'text', text: '问' })],
       ['m2', JSON.stringify({ type: 'text', text: '答' })],
-      ['m2', JSON.stringify({ type: 'tool', tool: 'bash', state: { input: { command: 'ls' } } })],
+      ['m2', JSON.stringify({ type: 'tool', tool: 'bash', state: { status: 'completed', input: { command: 'ls' }, output: 'ok' } })],
+      ['m2', JSON.stringify({ type: 'tool', tool: 'edit', state: { status: 'error', input: { file: 'a' }, error: 'denied' } })],
+    ],
+    todos: [['完成任务', 'in_progress', 'high'], ['收尾', 'pending', 'low']],
+    v2: [],
+  };
+  const stdout = ['===AGENTWS:json===', JSON.stringify(dump)].join('\n');
+  const blocks = renderOpencodeTranscript(stdout);
+  assert.deepEqual(blocks.map((b) => b.kind), ['text', 'text', 'tool', 'tool', 'todo']);
+  assert.equal(blocks[2].output, 'ok');
+  assert.equal(blocks[2].status, 'completed');
+  assert.equal(blocks[3].isError, true);
+  assert.equal(blocks[3].output, 'denied');
+  assert.deepEqual(blocks[4].items.map((i) => i.content), ['完成任务', '收尾']);
+});
+
+test('opencode: v2 session_message used when v1 empty', () => {
+  const dump = {
+    messages: [],
+    parts: [],
+    todos: [],
+    v2: [
+      ['user', JSON.stringify({ time: { created: 1 }, content: [{ type: 'text', text: 'v2 问题' }] })],
+      ['assistant', JSON.stringify({ time: { created: 2 }, content: [{ type: 'reasoning', text: '想' }, { type: 'text', text: 'v2 回答' }, { type: 'tool', tool: 'read', state: { status: 'completed', input: { f: 1 }, output: 'data' } }] })],
+      ['compaction', JSON.stringify({})],
     ],
   };
   const stdout = ['===AGENTWS:json===', JSON.stringify(dump)].join('\n');
-  const msgs = renderOpencodeTranscript(stdout);
-  assert.deepEqual(msgs.map((m) => m.role), ['user', 'assistant', 'tool']);
-  assert.equal(msgs[2].toolName, 'bash');
+  const blocks = renderOpencodeTranscript(stdout);
+  assert.deepEqual(blocks.map((b) => b.kind), ['text', 'thinking', 'text', 'tool', 'notice']);
+  assert.equal(blocks[0].markdown, 'v2 问题');
+  assert.equal(blocks[3].output, 'data');
 });

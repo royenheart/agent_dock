@@ -21,7 +21,7 @@
       "activitybar": [
         {
           "id": "agentWorkspace",
-          "title": "Agent Workspace",
+          "title": "%view.container.title%",
           "icon": "media/icon.svg"
         }
       ]
@@ -30,7 +30,7 @@
       "explorer": [
         {
           "id": "agentWorkspace.workspaceExplorer",
-          "name": "Agent Workspace",
+          "name": "%view.container.title%",
           "icon": "media/icon.svg",
           "contextualTitle": "Agent Workspace"
         }
@@ -38,13 +38,13 @@
       "agentWorkspace": [
         {
           "id": "agentWorkspace.workspace",
-          "name": "Workspace",
+          "name": "%view.workspace.name%",
           "icon": "media/icon.svg",
           "contextualTitle": "Agent Workspace"
         },
         {
           "id": "agentWorkspace.settings",
-          "name": "Agent Settings",
+          "name": "%view.settings.name%",
           "type": "webview",
           "icon": "media/icon.svg"
         }
@@ -53,20 +53,20 @@
     "viewsWelcome": [
       {
         "view": "agentWorkspace.workspace",
-        "contents": "展开「当前」节点查看本机/当前服务器的文件与 agent 会话。\n[添加远程服务器](command:agentWorkspace.addServer) 后，无需切换窗口即可浏览其他服务器的 opencode / Codex / Claude Code 会话。"
+        "contents": "%welcome.content%"
       },
       {
         "view": "agentWorkspace.workspaceExplorer",
-        "contents": "展开「当前」节点查看本机/当前服务器的文件与 agent 会话。\n[添加远程服务器](command:agentWorkspace.addServer) 后，无需切换窗口即可浏览其他服务器的 opencode / Codex / Claude Code 会话。"
+        "contents": "%welcome.content%"
       }
     ],
     "configuration": {
-      "title": "Agent Workspace",
+      "title": "%config.title%",
       "properties": {
         "agentWorkspace.servers": {
           "type": "array",
           "default": [],
-          "markdownDescription": "远程服务器列表。每项: `{ name, host, user?, port? }`。host 可以是 ~/.ssh/config 里的别名。",
+          "markdownDescription": "%config.servers.description%",
           "items": {
             "type": "object",
             "required": [
@@ -98,65 +98,65 @@
           "default": 100,
           "minimum": 10,
           "maximum": 1000,
-          "description": "每台服务器每个 agent 最多扫描的会话数（按最近修改排序）"
+          "description": "%config.sessionLimit.description%"
         },
         "agentWorkspace.connectInNewWindow": {
           "type": "boolean",
           "default": false,
-          "description": "Connect 命令在新窗口中打开远程服务器（默认复用当前窗口）"
+          "description": "%config.connectInNewWindow.description%"
         }
       }
     },
     "commands": [
       {
         "command": "agentWorkspace.refresh",
-        "title": "Refresh",
+        "title": "%cmd.refresh%",
         "category": "Agent Workspace",
         "icon": "$(refresh)"
       },
       {
         "command": "agentWorkspace.addServer",
-        "title": "Add Server",
+        "title": "%cmd.addServer%",
         "category": "Agent Workspace",
         "icon": "$(add)"
       },
       {
         "command": "agentWorkspace.removeServer",
-        "title": "Remove Server",
+        "title": "%cmd.removeServer%",
         "category": "Agent Workspace",
         "icon": "$(trash)"
       },
       {
         "command": "agentWorkspace.connect",
-        "title": "Connect to This Server",
+        "title": "%cmd.connect%",
         "category": "Agent Workspace",
         "icon": "$(remote)"
       },
       {
         "command": "agentWorkspace.connectTerminal",
-        "title": "Open SSH Terminal",
+        "title": "%cmd.connectTerminal%",
         "category": "Agent Workspace",
         "icon": "$(terminal)"
       },
       {
         "command": "agentWorkspace.openSession",
-        "title": "Open Transcript",
+        "title": "%cmd.openSession%",
         "category": "Agent Workspace"
       },
       {
         "command": "agentWorkspace.resumeSession",
-        "title": "Resume in Terminal",
+        "title": "%cmd.resumeSession%",
         "category": "Agent Workspace",
         "icon": "$(debug-continue)"
       },
       {
         "command": "agentWorkspace.copySessionId",
-        "title": "Copy Session ID",
+        "title": "%cmd.copySessionId%",
         "category": "Agent Workspace"
       },
       {
         "command": "agentWorkspace.openSettings",
-        "title": "Open Agent Settings",
+        "title": "%cmd.openSettings%",
         "category": "Agent Workspace",
         "icon": "$(gear)"
       }
@@ -223,5 +223,10 @@
     "@vscode/vsce": "^3.9.2",
     "mocha": "^11.7.6",
     "typescript": "^5.7.0"
+  },
+  "l10n": "./l10n",
+  "dependencies": {
+    "dompurify": "^3.4.12",
+    "marked": "^18.0.6"
   }
 }

@@ -2,6 +2,7 @@ import * as fs from 'node:fs/promises';
 import * as vscode from 'vscode';
 import { getCurrentContext } from '../config';
 import { gatherSettings, type SettingsData } from './settingsData';
+import { t } from '../i18n';
 
 export class SettingsViewProvider implements vscode.WebviewViewProvider {
   static readonly viewType = 'agentWorkspace.settings';
@@ -25,7 +26,7 @@ export class SettingsViewProvider implements vscode.WebviewViewProvider {
             await vscode.window.showTextDocument(vscode.Uri.file(msg.path), { preview: true });
           }
         } catch {
-          vscode.window.showWarningMessage(`无法打开: ${msg.path}`);
+          vscode.window.showWarningMessage(t('Cannot open: {0}', msg.path));
         }
       }
     });
@@ -37,14 +38,28 @@ export class SettingsViewProvider implements vscode.WebviewViewProvider {
       return;
     }
     const ctx = getCurrentContext();
-    const serverLabel = ctx.isLocal ? '本机 (Local)' : (ctx.sshHost ?? ctx.remoteName ?? 'remote');
-    const data = await gatherSettings(serverLabel);
+    const serverLabel = ctx.isLocal ? t('Local') : (ctx.sshHost ?? ctx.remoteName ?? 'remote');
+    const data = await gatherSettings(serverLabel, undefined, {
+      npmPackage: t('npm package'),
+      localPluginFile: t('local plugin file'),
+      handlers: (n) => t('{0} handlers', n),
+      installLocations: (n) => t('({0} install locations)', n),
+      opencodeHooksName: t('opencode hooks are plugin-based'),
+      opencodeHooksDetail: t('no standalone hooks config file; events are subscribed inside plugins'),
+      noConfigFound: t('No agent configuration found on the current server (MCP / Skills / Plugins / Hooks)'),
+    });
     this.view.webview.html = this.renderHtml(data);
   }
 
   private renderHtml(data: SettingsData | undefined): string {
     const nonce = String(Math.floor(Math.random() * 1e9));
-    const payload = data ? JSON.stringify(data).replace(/</g, '\\u003c') : 'null';
+    const ui = {
+      refresh: t('Refresh'),
+      server: t('Current server: {0}', data?.serverLabel ?? ''),
+      loading: t('Loading…'),
+      emptyAgent: t('No configuration for this agent on the current server'),
+    };
+    const payload = JSON.stringify({ data, ui }).replace(/</g, '\\u003c');
     return `<!DOCTYPE html>
 <html lang="zh">
 <head>
@@ -70,20 +85,23 @@ export class SettingsViewProvider implements vscode.WebviewViewProvider {
 </style>
 </head>
 <body>
-<div class="top"><span class="server" id="server"></span><button id="refresh">刷新</button></div>
+<div class="top"><span class="server" id="server"></span><button id="refresh">Refresh</button></div>
 <div class="tabs" id="tabs"></div>
 <div id="content"></div>
 <script nonce="${nonce}">
   const vscode = acquireVsCodeApi();
-  const data = ${payload};
+  const payload = ${payload};
+  const data = payload.data;
+  const ui = payload.ui;
   const TABS = [['claude','Claude Code'],['codex','Codex'],['opencode','opencode']];
   const SECTIONS = [['mcps','MCPs'],['skills','Skills'],['plugins','Plugins'],['hooks','Hooks']];
   let active = 'claude';
   function esc(s) { const d = document.createElement('div'); d.textContent = s ?? ''; return d.innerHTML; }
   function total(b) { return SECTIONS.reduce((n, [k]) => n + ((b && b[k]) ? b[k].length : 0), 0); }
   function render() {
-    if (!data) { document.getElementById('content').innerHTML = '<div class="note">加载中…</div>'; return; }
-    document.getElementById('server').textContent = '当前服务器: ' + data.serverLabel;
+    if (!data) { document.getElementById('content').innerHTML = '<div class="note">' + esc(ui.loading) + '</div>'; return; }
+    document.getElementById('server').textContent = ui.server;
+    document.getElementById('refresh').textContent = ui.refresh;
     const tabsEl = document.getElementById('tabs');
     tabsEl.innerHTML = '';
     for (const [key, label] of TABS) {
@@ -120,7 +138,7 @@ export class SettingsViewProvider implements vscode.WebviewViewProvider {
       }
     }
     if (!shown) {
-      c.innerHTML = '<div class="note">该 agent 在当前服务器暂无配置</div>'
+      c.innerHTML = '<div class="note">' + esc(ui.emptyAgent) + '</div>'
         + (data.notes || []).map(n => '<div class="note">' + esc(n) + '</div>').join('');
     }
   }

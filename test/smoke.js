@@ -43,10 +43,13 @@ function fmt(ms) {
     if (!s) continue;
     const tscript = buildTranscriptScript(s);
     const tres = await execLocal(tscript, 60_000);
-    const msgs = renderTranscript(s, tres.stdout);
-    console.log(`\n=== transcript ${agent} "${s.title.slice(0, 40)}" → ${msgs.length} messages ===`);
-    for (const m of msgs.slice(0, 4)) {
-      console.log(`  <${m.role}${m.toolName ? ':' + m.toolName : ''}> ${m.text.slice(0, 110).replace(/\n/g, ' | ')}`);
+    const blocks = renderTranscript(s, tres.stdout);
+    const kinds = {};
+    for (const b of blocks) kinds[b.kind] = (kinds[b.kind] || 0) + 1;
+    console.log(`\n=== transcript ${agent} "${s.title.slice(0, 40)}" → ${blocks.length} blocks`, kinds, '===');
+    for (const b of blocks.slice(0, 4)) {
+      const text = b.markdown ?? b.text ?? b.input ?? '';
+      console.log(`  <${b.kind}${b.name ? ':' + b.name : ''}> ${String(text).slice(0, 110).replace(/\n/g, ' | ')}`);
     }
   }
   console.log('\nSMOKE_DONE');
