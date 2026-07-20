@@ -4,7 +4,7 @@ import { SessionDecorationProvider } from './tree/sessionDecorations';
 import { SettingsViewProvider } from './views/settingsView';
 import { registerCommands } from './commands';
 
-export function activate(context: vscode.ExtensionContext): void {
+export function activate(context: vscode.ExtensionContext): { provider: WorkspaceProvider; decorations: SessionDecorationProvider } {
   const provider = new WorkspaceProvider();
   const tree = vscode.window.createTreeView('agentWorkspace.workspace', {
     treeDataProvider: provider,
@@ -38,6 +38,8 @@ export function activate(context: vscode.ExtensionContext): void {
     }),
     vscode.workspace.onDidChangeWorkspaceFolders(() => provider.refresh()),
   );
+
+  return { provider, decorations };
 }
 
 export function deactivate(): void {

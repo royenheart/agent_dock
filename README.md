@@ -21,6 +21,13 @@
 
 > 更新扩展后需执行 `Developer: Reload Window` 重新加载窗口才会生效。
 
+## 测试
+
+- `npm run test:unit` — 纯逻辑单元测试（node:test，无需 VS Code）：路径匹配、会话解析、transcript 渲染、ssh config、settings 聚合
+- `npm run test:e2e` — 端到端测试（`@vscode/test-electron` + xvfb）：在真实 VS Code 实例中验证树结构（目录镜像、文件与 sessions 并列、符号链接 cwd 匹配、AI 徽标、opencode sqlite transcript、ssh config 解析）
+  - fixtures 由 `test/fixtures/makeFixtures.js` 生成（`/tmp/agentws-e2e`），工作区经符号链接打开以覆盖 realpath 场景
+  - 注意：`test/e2e/code-under-test.sh` 直接调 electron 二进制——`/usr/bin/code` 包装脚本在 Remote-SSH 终端里会转发到已运行的 vscode-server，且 cli.js 会 detach 导致测试宿主被提前杀掉
+
 ## 依赖
 
 - 远程服务器需可通过 `ssh`（BatchMode，密钥认证）访问；建议安装 `python3`（最优扫描路径），否则回退 `sqlite3` CLI / 文件扫描

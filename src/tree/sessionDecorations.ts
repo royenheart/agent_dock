@@ -1,7 +1,7 @@
 import * as vscode from 'vscode';
 import type { SessionStore } from './workspaceProvider';
 import { CURRENT_SERVER_KEY } from './workspaceProvider';
-import { isUnder } from '../paths';
+import { isUnder, realpathSafe } from '../paths';
 
 /**
  * 在内置资源管理器（及本扩展的文件节点）上，为包含 agent 会话的目录加 AI 徽标。
@@ -10,11 +10,22 @@ import { isUnder } from '../paths';
 export class SessionDecorationProvider implements vscode.FileDecorationProvider {
   private readonly emitter = new vscode.EventEmitter<vscode.Uri | vscode.Uri[] | undefined>();
   readonly onDidProvideFileDecoration = this.emitter.event;
+  private readonly realpathCache = new Map<string, Promise<string>>();
 
   constructor(private readonly store: SessionStore) {}
 
   refresh(): void {
+    this.realpathCache.clear();
     this.emitter.fire(undefined);
+  }
+
+  private realpath(p: string): Promise<string> {
+    let cached = this.realpathCache.get(p);
+    if (!cached) {
+      cached = realpathSafe(p);
+      this.realpathCache.set(p, cached);
+    }
+    return cached;
   }
 
   async provideFileDecoration(uri: vscode.Uri): Promise<vscode.FileDecoration | undefined> {
@@ -22,7 +33,7 @@ export class SessionDecorationProvider implements vscode.FileDecorationProvider 
       return undefined;
     }
     const { sessions } = await this.store.sessionsFor(CURRENT_SERVER_KEY, undefined);
-    const p = uri.fsPath;
+    const p = await this.realpath(uri.fsPath);
     let count = 0;
     for (const s of sessions) {
       if (s.cwd && isUnder(s.cwd, p)) {
