@@ -1,22 +1,22 @@
 <div align="center">
-  <img src="media/logo.png" width="96" alt="VSCoder logo">
-  <h1>VSCoder</h1>
+  <img src="media/logo.png" width="96" alt="Agent Dock logo">
+  <h1>Agent Dock</h1>
   <p><strong>跨服务器 AI Agent 会话工作区</strong> · Cross-server AI agent workspace for VS Code</p>
   <p>
-    <a href="https://github.com/royenheart/vscoder/actions/workflows/ci.yml"><img src="https://github.com/royenheart/vscoder/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
+    <a href="https://github.com/royenheart/agent-dock/actions/workflows/ci.yml"><img src="https://github.com/royenheart/agent-dock/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
     <img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="license">
     <img src="https://img.shields.io/badge/vscode-%5E1.96.0-007acc.svg" alt="vscode">
   </p>
-  <img src="media/social.png" width="880" alt="VSCoder — 跨服务器 AI Agent 会话工作区">
+  <img src="media/social.png" width="880" alt="Agent Dock — 跨服务器 AI Agent 会话工作区">
 </div>
 
 ---
 
-一个窗口，统览多台服务器上的 AI 编程会话：VS Code 的 workspace 只能展示当前连接服务器的文件，VSCoder 在此基础上把 **opencode / Codex CLI / Claude Code** 的历史会话按服务器聚合到同一棵树里——当前服务器看文件+会话，其他服务器只看会话，随时切换连接、恢复对话。
+一个窗口，统览多台服务器上的 AI 编程会话：VS Code 的 workspace 只能展示当前连接服务器的文件，Agent Dock 在此基础上把 **opencode / Codex CLI / Claude Code** 的历史会话按服务器聚合到同一棵树里——当前服务器看文件+会话，其他服务器只看会话，随时切换连接、恢复对话。
 
 ## 功能
 
-- **统一 Workspace 树**（活动栏「VSCoder」+ 内置「资源管理器」面板双入口，内容同步）
+- **统一 Workspace 树**（活动栏「Agent Dock」+ 内置「资源管理器」面板双入口，内容同步）
   - 当前服务器：workspace 目录的文件树 + `sessions` 子节点下的 agent 会话（目录 → sessions → 各会话）
   - 其他服务器：只显示**显式添加的目录**及其会话；其余会话收进「其他目录会话」
   - 内置资源管理器中，含会话的目录显示 **AI 徽标**；文件节点有完整右键菜单（打开/复制路径/新建/重命名/删除/终端打开/从工作区移除）

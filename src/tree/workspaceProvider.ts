@@ -182,7 +182,7 @@ export class WorkspaceProvider implements vscode.TreeDataProvider<Node> {
           `**${s.title}**\n\n- agent: ${AGENT_LABEL[s.agent]}\n- id: \`${s.id}\`\n- cwd: \`${s.cwd}\`\n- ${t('updated')}: ${s.timeUpdated ? new Date(s.timeUpdated).toLocaleString() : '-'}`,
         );
         item.command = {
-          command: 'vscoder.openSession',
+          command: 'agentDock.openSession',
           title: 'Open Transcript',
           arguments: [node],
         };

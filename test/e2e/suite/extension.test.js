@@ -9,7 +9,7 @@ suite('agent-workspace e2e', () => {
   let api;
 
   suiteSetup(async () => {
-    const ext = vscode.extensions.getExtension('royenheart.vscoder');
+    const ext = vscode.extensions.getExtension('royenheart.agent-dock');
     assert.ok(ext, 'extension should be installed');
     api = await ext.activate();
     assert.ok(api && api.provider, 'activate() should export { provider, decorations }');
@@ -96,7 +96,7 @@ suite('agent-workspace e2e', () => {
   test('create session command opens a terminal for the picked agent', async () => {
     const children = await currentServerChildren();
     const wsFolder = children.find((n) => n.kind === 'folder' && n.workspaceUri);
-    await vscode.commands.executeCommand('vscoder.createSession', wsFolder, 'codex');
+    await vscode.commands.executeCommand('agentDock.createSession', wsFolder, 'codex');
     await new Promise((r) => setTimeout(r, 800));
     const term = vscode.window.terminals.find((t2) => t2.name.includes('codex'));
     assert.ok(term, `terminal for codex created, have: ${vscode.window.terminals.map((t2) => t2.name).join(',')}`);
@@ -111,16 +111,16 @@ suite('agent-workspace e2e', () => {
     const aTxt = kids.find((k) => k.kind === 'fsEntry' && k.name === 'a.txt');
     assert.ok(aTxt, 'a.txt node exists');
 
-    await vscode.commands.executeCommand('vscoder.fsCopyPath', aTxt);
+    await vscode.commands.executeCommand('agentDock.fsCopyPath', aTxt);
     const clip = await vscode.env.clipboard.readText();
     assert.ok(clip.endsWith('a.txt'), `clipboard should end with a.txt, got ${clip}`);
 
-    await vscode.commands.executeCommand('vscoder.fsNewFile', wsFolder, 'e2e-new.txt');
+    await vscode.commands.executeCommand('agentDock.fsNewFile', wsFolder, 'e2e-new.txt');
     const created = await vscode.workspace.fs.stat(vscode.Uri.joinPath(wsUri, 'e2e-new.txt'));
     assert.ok(created, 'new file created');
 
     await vscode.commands.executeCommand(
-      'vscoder.fsRename',
+      'agentDock.fsRename',
       { kind: 'fsEntry', uri: vscode.Uri.joinPath(wsUri, 'e2e-new.txt'), name: 'e2e-new.txt', isDir: false },
       'e2e-renamed.txt',
     );
@@ -132,9 +132,9 @@ suite('agent-workspace e2e', () => {
     const children = await currentServerChildren();
     const wsFolder = children.find((n) => n.kind === 'folder' && n.workspaceUri);
     assert.ok(wsFolder, 'workspace folder node exists');
-    const result = await vscode.commands.executeCommand('vscoder.fsRemoveFromWorkspace', wsFolder);
+    const result = await vscode.commands.executeCommand('agentDock.fsRemoveFromWorkspace', wsFolder);
     assert.equal(typeof result, 'boolean', 'command returns a boolean contract');
-    const bogus = await vscode.commands.executeCommand('vscoder.fsRemoveFromWorkspace', { kind: 'folder', serverKey: 'x', path: '/x', label: 'x' });
+    const bogus = await vscode.commands.executeCommand('agentDock.fsRemoveFromWorkspace', { kind: 'folder', serverKey: 'x', path: '/x', label: 'x' });
     assert.equal(bogus, false, 'non-workspace folder node is rejected');
   });
 

@@ -352,11 +352,11 @@ export function registerCommands(context: vscode.ExtensionContext, provider: Wor
     context.subscriptions.push(vscode.commands.registerCommand(id, fn));
   };
 
-  reg('vscoder.refresh', () => provider.refresh());
+  reg('agentDock.refresh', () => provider.refresh());
 
-  reg('vscoder.addServer', (node?: ServerNode) => addDirectoryFlow(provider, node));
+  reg('agentDock.addServer', (node?: ServerNode) => addDirectoryFlow(provider, node));
 
-  reg('vscoder.removeServer', async (node: ServerNode) => {
+  reg('agentDock.removeServer', async (node: ServerNode) => {
     if (!node?.server) {
       return;
     }
@@ -371,13 +371,13 @@ export function registerCommands(context: vscode.ExtensionContext, provider: Wor
     }
   });
 
-  reg('vscoder.connect', async (node: ServerNode) => {
+  reg('agentDock.connect', async (node: ServerNode) => {
     if (node?.server) {
       await connectToServer(node.server);
     }
   });
 
-  reg('vscoder.connectTerminal', (node: ServerNode) => {
+  reg('agentDock.connectTerminal', (node: ServerNode) => {
     if (!node?.server) {
       return;
     }
@@ -387,46 +387,46 @@ export function registerCommands(context: vscode.ExtensionContext, provider: Wor
     term.show();
   });
 
-  reg('vscoder.openSession', async (node: SessionNode) => {
+  reg('agentDock.openSession', async (node: SessionNode) => {
     const target = node ? sessionTarget(node) : undefined;
     if (target) {
       await SessionPanel.show(target, resumeInTerminal);
     }
   });
 
-  reg('vscoder.resumeSession', (node: SessionNode) => {
+  reg('agentDock.resumeSession', (node: SessionNode) => {
     const target = node ? sessionTarget(node) : undefined;
     if (target) {
       resumeInTerminal(target);
     }
   });
 
-  reg('vscoder.copySessionId', async (node: SessionNode) => {
+  reg('agentDock.copySessionId', async (node: SessionNode) => {
     if (node?.session) {
       await vscode.env.clipboard.writeText(node.session.id);
       vscode.window.showInformationMessage(t('Session ID copied: {0}', node.session.id));
     }
   });
 
-  reg('vscoder.fsOpenSide', (node: FsEntryNode) => {
+  reg('agentDock.fsOpenSide', (node: FsEntryNode) => {
     if (node?.uri) {
       void vscode.commands.executeCommand('vscode.open', node.uri, { viewColumn: vscode.ViewColumn.Beside });
     }
   });
 
-  reg('vscoder.fsCopyPath', async (node: FsEntryNode) => {
+  reg('agentDock.fsCopyPath', async (node: FsEntryNode) => {
     if (node?.uri) {
       await vscode.commands.executeCommand('copyFilePath', node.uri);
     }
   });
 
-  reg('vscoder.fsCopyRelativePath', async (node: FsEntryNode) => {
+  reg('agentDock.fsCopyRelativePath', async (node: FsEntryNode) => {
     if (node?.uri) {
       await vscode.commands.executeCommand('copyRelativeFilePath', node.uri);
     }
   });
 
-  reg('vscoder.fsRevealOS', async (node: FsEntryNode) => {
+  reg('agentDock.fsRevealOS', async (node: FsEntryNode) => {
     if (node?.uri) {
       try {
         await vscode.commands.executeCommand('revealFileInOS', node.uri);
@@ -436,7 +436,7 @@ export function registerCommands(context: vscode.ExtensionContext, provider: Wor
     }
   });
 
-  reg('vscoder.fsNewFile', async (node: FsEntryNode | FolderNode, name?: string) => {
+  reg('agentDock.fsNewFile', async (node: FsEntryNode | FolderNode, name?: string) => {
     const dir = targetDirUri(node);
     if (!dir) {
       return;
@@ -451,7 +451,7 @@ export function registerCommands(context: vscode.ExtensionContext, provider: Wor
     await vscode.window.showTextDocument(target, { preview: false });
   });
 
-  reg('vscoder.fsNewFolder', async (node: FsEntryNode | FolderNode, name?: string) => {
+  reg('agentDock.fsNewFolder', async (node: FsEntryNode | FolderNode, name?: string) => {
     const dir = targetDirUri(node);
     if (!dir) {
       return;
@@ -464,7 +464,7 @@ export function registerCommands(context: vscode.ExtensionContext, provider: Wor
     provider.refresh();
   });
 
-  reg('vscoder.fsRename', async (node: FsEntryNode, newName?: string) => {
+  reg('agentDock.fsRename', async (node: FsEntryNode, newName?: string) => {
     if (node?.kind !== 'fsEntry') {
       return;
     }
@@ -478,7 +478,7 @@ export function registerCommands(context: vscode.ExtensionContext, provider: Wor
     provider.refresh();
   });
 
-  reg('vscoder.fsDelete', async (node: FsEntryNode) => {
+  reg('agentDock.fsDelete', async (node: FsEntryNode) => {
     if (node?.kind !== 'fsEntry') {
       return;
     }
@@ -493,14 +493,14 @@ export function registerCommands(context: vscode.ExtensionContext, provider: Wor
     }
   });
 
-  reg('vscoder.fsOpenTerminal', (node: FsEntryNode | FolderNode) => {
+  reg('agentDock.fsOpenTerminal', (node: FsEntryNode | FolderNode) => {
     const dir = targetDirUri(node);
     if (dir) {
       vscode.window.createTerminal({ cwd: dir.fsPath }).show();
     }
   });
 
-  reg('vscoder.createSession', async (node: FolderNode, agent?: 'opencode' | 'codex' | 'claude') => {
+  reg('agentDock.createSession', async (node: FolderNode, agent?: 'opencode' | 'codex' | 'claude') => {
     if (node?.kind !== 'folder') {
       return;
     }
@@ -534,7 +534,7 @@ export function registerCommands(context: vscode.ExtensionContext, provider: Wor
     }
   });
 
-  reg('vscoder.fsRemoveFromWorkspace', (node: FolderNode): boolean => {    if (node?.kind !== 'folder' || !node.workspaceUri) {
+  reg('agentDock.fsRemoveFromWorkspace', (node: FolderNode): boolean => {    if (node?.kind !== 'folder' || !node.workspaceUri) {
       return false;
     }
     const folders = vscode.workspace.workspaceFolders ?? [];
@@ -553,7 +553,7 @@ export function registerCommands(context: vscode.ExtensionContext, provider: Wor
     return ok;
   });
 
-  reg('vscoder.openSettings', async () => {
-    await vscode.commands.executeCommand('vscoder.settings.focus');
+  reg('agentDock.openSettings', async () => {
+    await vscode.commands.executeCommand('agentDock.settings.focus');
   });
 }

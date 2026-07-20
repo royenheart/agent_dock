@@ -5,7 +5,7 @@ import { gatherSettings, type SettingsData } from './settingsData';
 import { t } from '../i18n';
 
 export class SettingsViewProvider implements vscode.WebviewViewProvider {
-  static readonly viewType = 'vscoder.settings';
+  static readonly viewType = 'agentDock.settings';
   private view?: vscode.WebviewView;
 
   constructor(private readonly extensionUri: vscode.Uri) {}

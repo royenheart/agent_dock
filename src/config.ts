@@ -2,16 +2,19 @@ import * as os from 'node:os';
 import * as vscode from 'vscode';
 import type { ServerConfig } from './model';
 
-const SECTION = 'vscoder';
-const LEGACY_SECTION = 'agentWorkspace';
+const SECTION = 'agentDock';
+const LEGACY_SECTIONS = ['vscoder', 'agentWorkspace'];
 
 export function getServers(): ServerConfig[] {
   const cfg = vscode.workspace.getConfiguration(SECTION);
   let raw = cfg.get<unknown>('servers', []);
   if (!Array.isArray(raw) || raw.length === 0) {
-    const legacy = vscode.workspace.getConfiguration(LEGACY_SECTION).get<unknown>('servers', []);
-    if (Array.isArray(legacy) && legacy.length > 0) {
-      raw = legacy;
+    for (const legacySection of LEGACY_SECTIONS) {
+      const legacy = vscode.workspace.getConfiguration(legacySection).get<unknown>('servers', []);
+      if (Array.isArray(legacy) && legacy.length > 0) {
+        raw = legacy;
+        break;
+      }
     }
   }
   if (!Array.isArray(raw)) {

@@ -1,7 +1,7 @@
 {
-  "name": "vscoder",
-  "displayName": "VSCoder",
-  "description": "VSCoder — cross-server AI agent workspace: files of the current server plus opencode / Codex CLI / Claude Code sessions across SSH servers.",
+  "name": "agent-dock",
+  "displayName": "Agent Dock",
+  "description": "Agent Dock — cross-server AI agent workspace: files of the current server plus opencode / Codex CLI / Claude Code sessions across SSH servers.",
   "version": "0.0.1",
   "publisher": "royenheart",
   "license": "MIT",
@@ -20,8 +20,8 @@
     "viewsContainers": {
       "activitybar": [
         {
-          "id": "vscoder",
-          "title": "VSCoder",
+          "id": "agentDock",
+          "title": "Agent Dock",
           "icon": "media/icon.svg"
         }
       ]
@@ -29,21 +29,21 @@
     "views": {
       "explorer": [
         {
-          "id": "vscoder.workspaceExplorer",
+          "id": "agentDock.workspaceExplorer",
           "name": "%view.container.title%",
           "icon": "media/icon.svg",
           "contextualTitle": "Agent Workspace"
         }
       ],
-      "vscoder": [
+      "agentDock": [
         {
-          "id": "vscoder.workspace",
+          "id": "agentDock.workspace",
           "name": "%view.workspace.name%",
           "icon": "media/icon.svg",
           "contextualTitle": "Agent Workspace"
         },
         {
-          "id": "vscoder.settings",
+          "id": "agentDock.settings",
           "name": "%view.settings.name%",
           "type": "webview",
           "icon": "media/icon.svg"
@@ -52,18 +52,18 @@
     },
     "viewsWelcome": [
       {
-        "view": "vscoder.workspace",
+        "view": "agentDock.workspace",
         "contents": "%welcome.content%"
       },
       {
-        "view": "vscoder.workspaceExplorer",
+        "view": "agentDock.workspaceExplorer",
         "contents": "%welcome.content%"
       }
     ],
     "configuration": {
-      "title": "VSCoder",
+      "title": "Agent Dock",
       "properties": {
-        "vscoder.servers": {
+        "agentDock.servers": {
           "type": "array",
           "default": [],
           "markdownDescription": "%config.servers.description%",
@@ -93,14 +93,14 @@
             }
           }
         },
-        "vscoder.sessionLimit": {
+        "agentDock.sessionLimit": {
           "type": "number",
           "default": 100,
           "minimum": 10,
           "maximum": 1000,
           "description": "%config.sessionLimit.description%"
         },
-        "vscoder.connectInNewWindow": {
+        "agentDock.connectInNewWindow": {
           "type": "boolean",
           "default": false,
           "description": "%config.connectInNewWindow.description%"
@@ -109,119 +109,119 @@
     },
     "commands": [
       {
-        "command": "vscoder.refresh",
+        "command": "agentDock.refresh",
         "title": "%cmd.refresh%",
         "category": "Agent Workspace",
         "icon": "$(refresh)"
       },
       {
-        "command": "vscoder.addServer",
+        "command": "agentDock.addServer",
         "title": "%cmd.addServer%",
         "category": "Agent Workspace",
         "icon": "$(add)"
       },
       {
-        "command": "vscoder.removeServer",
+        "command": "agentDock.removeServer",
         "title": "%cmd.removeServer%",
         "category": "Agent Workspace",
         "icon": "$(trash)"
       },
       {
-        "command": "vscoder.connect",
+        "command": "agentDock.connect",
         "title": "%cmd.connect%",
         "category": "Agent Workspace",
         "icon": "$(remote)"
       },
       {
-        "command": "vscoder.connectTerminal",
+        "command": "agentDock.connectTerminal",
         "title": "%cmd.connectTerminal%",
         "category": "Agent Workspace",
         "icon": "$(terminal)"
       },
       {
-        "command": "vscoder.openSession",
+        "command": "agentDock.openSession",
         "title": "%cmd.openSession%",
         "category": "Agent Workspace"
       },
       {
-        "command": "vscoder.resumeSession",
+        "command": "agentDock.resumeSession",
         "title": "%cmd.resumeSession%",
         "category": "Agent Workspace",
         "icon": "$(debug-continue)"
       },
       {
-        "command": "vscoder.copySessionId",
+        "command": "agentDock.copySessionId",
         "title": "%cmd.copySessionId%",
         "category": "Agent Workspace"
       },
       {
-        "command": "vscoder.openSettings",
+        "command": "agentDock.openSettings",
         "title": "%cmd.openSettings%",
         "category": "Agent Workspace",
         "icon": "$(gear)"
       },
       {
-        "command": "vscoder.fsOpenSide",
+        "command": "agentDock.fsOpenSide",
         "title": "%cmd.fsOpenSide%",
         "category": "Agent Workspace",
         "icon": "$(go-to-file)"
       },
       {
-        "command": "vscoder.fsCopyPath",
+        "command": "agentDock.fsCopyPath",
         "title": "%cmd.fsCopyPath%",
         "category": "Agent Workspace",
         "icon": "$(clippy)"
       },
       {
-        "command": "vscoder.fsCopyRelativePath",
+        "command": "agentDock.fsCopyRelativePath",
         "title": "%cmd.fsCopyRelativePath%",
         "category": "Agent Workspace",
         "icon": "$(clippy)"
       },
       {
-        "command": "vscoder.fsRevealOS",
+        "command": "agentDock.fsRevealOS",
         "title": "%cmd.fsRevealOS%",
         "category": "Agent Workspace",
         "icon": "$(folder-opened)"
       },
       {
-        "command": "vscoder.fsNewFile",
+        "command": "agentDock.fsNewFile",
         "title": "%cmd.fsNewFile%",
         "category": "Agent Workspace",
         "icon": "$(new-file)"
       },
       {
-        "command": "vscoder.fsNewFolder",
+        "command": "agentDock.fsNewFolder",
         "title": "%cmd.fsNewFolder%",
         "category": "Agent Workspace",
         "icon": "$(new-folder)"
       },
       {
-        "command": "vscoder.fsRename",
+        "command": "agentDock.fsRename",
         "title": "%cmd.fsRename%",
         "category": "Agent Workspace",
         "icon": "$(edit)"
       },
       {
-        "command": "vscoder.fsDelete",
+        "command": "agentDock.fsDelete",
         "title": "%cmd.fsDelete%",
         "category": "Agent Workspace",
         "icon": "$(trash)"
       },
       {
-        "command": "vscoder.fsOpenTerminal",
+        "command": "agentDock.fsOpenTerminal",
         "title": "%cmd.fsOpenTerminal%",
         "category": "Agent Workspace",
         "icon": "$(terminal)"
       },
       {
-        "command": "vscoder.fsRemoveFromWorkspace",
+        "command": "agentDock.fsRemoveFromWorkspace",
         "title": "%cmd.fsRemoveFromWorkspace%",
         "category": "Agent Workspace",
         "icon": "$(close)"
       },
       {
-        "command": "vscoder.createSession",
+        "command": "agentDock.createSession",
         "title": "%cmd.createSession%",
         "category": "Agent Workspace",
         "icon": "$(add)"
@@ -230,105 +230,105 @@
     "menus": {
       "view/title": [
         {
-          "command": "vscoder.refresh",
-          "when": "view =~ /^vscoder.workspace/",
+          "command": "agentDock.refresh",
+          "when": "view =~ /^agentDock.workspace/",
           "group": "navigation@1"
         },
         {
-          "command": "vscoder.addServer",
-          "when": "view =~ /^vscoder.workspace/",
+          "command": "agentDock.addServer",
+          "when": "view =~ /^agentDock.workspace/",
           "group": "navigation@2"
         }
       ],
       "view/item/context": [
         {
-          "command": "vscoder.connect",
-          "when": "view =~ /^vscoder.workspace/ && viewItem == server.remote",
+          "command": "agentDock.connect",
+          "when": "view =~ /^agentDock.workspace/ && viewItem == server.remote",
           "group": "1_connection@1"
         },
         {
-          "command": "vscoder.connectTerminal",
-          "when": "view =~ /^vscoder.workspace/ && viewItem == server.remote",
+          "command": "agentDock.connectTerminal",
+          "when": "view =~ /^agentDock.workspace/ && viewItem == server.remote",
           "group": "1_connection@2"
         },
         {
-          "command": "vscoder.removeServer",
-          "when": "view =~ /^vscoder.workspace/ && viewItem == server.remote",
+          "command": "agentDock.removeServer",
+          "when": "view =~ /^agentDock.workspace/ && viewItem == server.remote",
           "group": "2_manage@1"
         },
         {
-          "command": "vscoder.resumeSession",
-          "when": "view =~ /^vscoder.workspace/ && viewItem == session",
+          "command": "agentDock.resumeSession",
+          "when": "view =~ /^agentDock.workspace/ && viewItem == session",
           "group": "1_session@1"
         },
         {
-          "command": "vscoder.openSession",
-          "when": "view =~ /^vscoder.workspace/ && viewItem == session",
+          "command": "agentDock.openSession",
+          "when": "view =~ /^agentDock.workspace/ && viewItem == session",
           "group": "1_session@2"
         },
         {
-          "command": "vscoder.copySessionId",
-          "when": "view =~ /^vscoder.workspace/ && viewItem == session",
+          "command": "agentDock.copySessionId",
+          "when": "view =~ /^agentDock.workspace/ && viewItem == session",
           "group": "2_session@1"
         },
         {
-          "command": "vscoder.addServer",
-          "when": "view =~ /^vscoder.workspace/ && viewItem == server.remote",
+          "command": "agentDock.addServer",
+          "when": "view =~ /^agentDock.workspace/ && viewItem == server.remote",
           "group": "2_manage@2"
         },
         {
-          "command": "vscoder.fsOpenSide",
-          "when": "view =~ /^vscoder.workspace/ && viewItem == fsFile",
+          "command": "agentDock.fsOpenSide",
+          "when": "view =~ /^agentDock.workspace/ && viewItem == fsFile",
           "group": "1_open@1"
         },
         {
-          "command": "vscoder.fsNewFile",
-          "when": "view =~ /^vscoder.workspace/ && (viewItem == fsDir || viewItem == folder.workspace)",
+          "command": "agentDock.fsNewFile",
+          "when": "view =~ /^agentDock.workspace/ && (viewItem == fsDir || viewItem == folder.workspace)",
           "group": "2_new@1"
         },
         {
-          "command": "vscoder.fsNewFolder",
-          "when": "view =~ /^vscoder.workspace/ && (viewItem == fsDir || viewItem == folder.workspace)",
+          "command": "agentDock.fsNewFolder",
+          "when": "view =~ /^agentDock.workspace/ && (viewItem == fsDir || viewItem == folder.workspace)",
           "group": "2_new@2"
         },
         {
-          "command": "vscoder.fsRename",
-          "when": "view =~ /^vscoder.workspace/ && (viewItem == fsFile || viewItem == fsDir)",
+          "command": "agentDock.fsRename",
+          "when": "view =~ /^agentDock.workspace/ && (viewItem == fsFile || viewItem == fsDir)",
           "group": "3_modify@1"
         },
         {
-          "command": "vscoder.fsDelete",
-          "when": "view =~ /^vscoder.workspace/ && (viewItem == fsFile || viewItem == fsDir)",
+          "command": "agentDock.fsDelete",
+          "when": "view =~ /^agentDock.workspace/ && (viewItem == fsFile || viewItem == fsDir)",
           "group": "3_modify@2"
         },
         {
-          "command": "vscoder.fsCopyPath",
-          "when": "view =~ /^vscoder.workspace/ && (viewItem == fsFile || viewItem == fsDir)",
+          "command": "agentDock.fsCopyPath",
+          "when": "view =~ /^agentDock.workspace/ && (viewItem == fsFile || viewItem == fsDir)",
           "group": "4_copy@1"
         },
         {
-          "command": "vscoder.fsCopyRelativePath",
-          "when": "view =~ /^vscoder.workspace/ && (viewItem == fsFile || viewItem == fsDir)",
+          "command": "agentDock.fsCopyRelativePath",
+          "when": "view =~ /^agentDock.workspace/ && (viewItem == fsFile || viewItem == fsDir)",
           "group": "4_copy@2"
         },
         {
-          "command": "vscoder.fsRevealOS",
-          "when": "view =~ /^vscoder.workspace/ && (viewItem == fsFile || viewItem == fsDir)",
+          "command": "agentDock.fsRevealOS",
+          "when": "view =~ /^agentDock.workspace/ && (viewItem == fsFile || viewItem == fsDir)",
           "group": "4_copy@3"
         },
         {
-          "command": "vscoder.fsOpenTerminal",
-          "when": "view =~ /^vscoder.workspace/ && (viewItem == fsDir || viewItem == folder.workspace)",
+          "command": "agentDock.fsOpenTerminal",
+          "when": "view =~ /^agentDock.workspace/ && (viewItem == fsDir || viewItem == folder.workspace)",
           "group": "5_terminal@1"
         },
         {
-          "command": "vscoder.fsRemoveFromWorkspace",
-          "when": "view =~ /^vscoder.workspace/ && viewItem == folder.workspace",
+          "command": "agentDock.fsRemoveFromWorkspace",
+          "when": "view =~ /^agentDock.workspace/ && viewItem == folder.workspace",
           "group": "3_modify@3"
         },
         {
-          "command": "vscoder.createSession",
-          "when": "view =~ /^vscoder.workspace/ && (viewItem == folder.workspace || viewItem == folder.remote)",
+          "command": "agentDock.createSession",
+          "when": "view =~ /^agentDock.workspace/ && (viewItem == folder.workspace || viewItem == folder.remote)",
           "group": "1_session@0"
         }
       ]
@@ -357,6 +357,6 @@
   },
   "repository": {
     "type": "git",
-    "url": "https://github.com/royenheart/vscoder.git"
+    "url": "https://github.com/royenheart/agent-dock.git"
   }
 }

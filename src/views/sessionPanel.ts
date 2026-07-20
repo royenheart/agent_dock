@@ -40,7 +40,7 @@ export class SessionPanel {
     const panel =
       existing ??
       vscode.window.createWebviewPanel(
-        'vscoder.session',
+        'agentDock.session',
         `${AGENT_LABEL[target.session.agent]} · ${target.session.title.slice(0, 40)}`,
         vscode.ViewColumn.Active,
         { enableScripts: true, localResourceRoots: [panelExtensionUri] },

@@ -1,17 +1,19 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="128" height="128" viewBox="0 0 128 128">
   <defs>
     <linearGradient id="g" x1="0" y1="0" x2="1" y2="1">
-      <stop offset="0" stop-color="#6366f1"/>
-      <stop offset="1" stop-color="#a855f7"/>
-    </linearGradient>
-    <linearGradient id="v" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0" stop-color="#ffffff"/>
-      <stop offset="1" stop-color="#dbe4ff"/>
+      <stop offset="0" stop-color="#0ea5e9"/>
+      <stop offset="1" stop-color="#8b5cf6"/>
     </linearGradient>
   </defs>
   <path fill="url(#g)" d="M64 6 114 35v58L64 122 14 93V35L64 6z"/>
   <path fill="none" stroke="#ffffff" stroke-opacity="0.25" stroke-width="3" d="M64 16 105 39.5v49L64 112 23 88.5v-49L64 16z"/>
-  <path fill="url(#v)" d="M36 42h15l13 32 13-32h15L72 96H56L36 42z"/>
-  <circle cx="93" cy="88" r="9" fill="#22d3ee"/>
-  <circle cx="93" cy="88" r="4" fill="#0f172a"/>
+  <g stroke="#ffffff" stroke-width="5" stroke-linecap="round">
+    <line x1="64" y1="64" x2="36" y2="48"/>
+    <line x1="64" y1="64" x2="92" y2="48"/>
+    <line x1="64" y1="64" x2="64" y2="96"/>
+  </g>
+  <circle cx="64" cy="64" r="10" fill="#ffffff"/>
+  <circle cx="36" cy="46" r="7" fill="#a5f3fc"/>
+  <circle cx="92" cy="46" r="7" fill="#a5f3fc"/>
+  <circle cx="64" cy="98" r="7" fill="#a5f3fc"/>
 </svg>
