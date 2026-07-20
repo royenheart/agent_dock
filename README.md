@@ -3,7 +3,7 @@
   <h1>Agent Dock</h1>
   <p><strong>跨服务器 AI Agent 会话工作区</strong> · Cross-server AI agent workspace for VS Code</p>
   <p>
-    <a href="https://github.com/royenheart/agent-dock/actions/workflows/ci.yml"><img src="https://github.com/royenheart/agent-dock/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
+    <a href="https://github.com/royenheart/agent_dock/actions/workflows/ci.yml"><img src="https://github.com/royenheart/agent_dock/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
     <img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="license">
     <img src="https://img.shields.io/badge/vscode-%5E1.96.0-007acc.svg" alt="vscode">
   </p>
