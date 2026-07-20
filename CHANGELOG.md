@@ -1,3 +1,10 @@
+## v0.1.1 (2026-07-21)
+
+### Fix
+
+- repository URL to royenheart/agent_dock (underscore) so vsce-rewritten image URLs resolve
+- add icon field so the extension icon shows in the Extensions view
+
 ## v0.1.0 (2026-07-20)
 
 ### Feat
