@@ -204,6 +204,11 @@
           "command": "agentWorkspace.copySessionId",
           "when": "view =~ /^agentWorkspace.workspace/ && viewItem == session",
           "group": "2_session@1"
+        },
+        {
+          "command": "agentWorkspace.addServer",
+          "when": "view =~ /^agentWorkspace.workspace/ && viewItem == server.remote",
+          "group": "2_manage@2"
         }
       ]
     }

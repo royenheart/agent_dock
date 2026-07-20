@@ -1,5 +1,5 @@
 import * as vscode from 'vscode';
-import { WorkspaceProvider } from './tree/workspaceProvider';
+import { WorkspaceProvider, type Node } from './tree/workspaceProvider';
 import { SessionDecorationProvider } from './tree/sessionDecorations';
 import { SettingsViewProvider } from './views/settingsView';
 import { SessionPanel } from './views/sessionPanel';
@@ -20,10 +20,15 @@ export function activate(context: vscode.ExtensionContext): { provider: Workspac
   provider.store.onDidSettle = () => decorations.refresh();
   provider.onDidChangeTreeData(() => decorations.refresh());
   const settings = new SettingsViewProvider(context.extensionUri);
+  const syncSelection = (e: vscode.TreeViewSelectionChangeEvent<Node>): void => {
+    [provider.selectedNode] = e.selection;
+  };
 
   context.subscriptions.push(
     tree,
     treeExplorer,
+    tree.onDidChangeSelection(syncSelection),
+    treeExplorer.onDidChangeSelection(syncSelection),
     vscode.window.registerFileDecorationProvider(decorations),
     vscode.window.registerWebviewViewProvider(SettingsViewProvider.viewType, settings, {
       webviewOptions: { retainContextWhenHidden: true },

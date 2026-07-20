@@ -1,3 +1,5 @@
+import * as os from 'node:os';
+import * as fsp from 'node:fs/promises';
 import * as vscode from 'vscode';
 import type { ServerConfig } from './model';
 import {
@@ -14,7 +16,7 @@ import { buildDiscoveryScript } from './agents/discoveryScript';
 import { parseDiscoveryOutput } from './agents/parse';
 import { execRemote, sshDestination, shq } from './ssh/remoteExec';
 import { readSshConfigHosts, type SshHostEntry } from './ssh/sshConfig';
-import { pathBasename } from './paths';
+import { pickDirectory } from './views/dirPicker';
 import { SessionPanel, type SessionTarget } from './views/sessionPanel';
 import type { Node, WorkspaceProvider } from './tree/workspaceProvider';
 import { CURRENT_SERVER_KEY } from './tree/workspaceProvider';
@@ -149,77 +151,109 @@ async function manualAddServerFlow(provider: WorkspaceProvider): Promise<void> {
   );
 }
 
-async function confirmAndSave(
-  entry: SshHostEntry,
-  provider: WorkspaceProvider,
-  folders?: string[],
-): Promise<void> {
-  const name = await vscode.window.showInputBox({
-    prompt: t('Server display name (host: {0})', entry.host),
-    value: entry.host,
-    validateInput: validateServerName,
-  });
-  if (!name) {
-    return;
+function uniqueServerName(base: string): string {
+  const names = new Set(getServers().map((s) => s.name));
+  if (!names.has(base)) {
+    return base;
   }
-  await saveServer({ name: name.trim(), host: entry.host, user: entry.user, port: entry.port, folders }, provider);
+  for (let i = 2; ; i++) {
+    if (!names.has(`${base}-${i}`)) {
+      return `${base}-${i}`;
+    }
+  }
 }
 
-async function addRemoteDirectoryFlow(entry: SshHostEntry, provider: WorkspaceProvider): Promise<void> {
-  const server: ServerConfig = { name: entry.host, host: entry.host, user: entry.user, port: entry.port };
-  const dirs = await vscode.window.withProgress(
-    { location: vscode.ProgressLocation.Notification, title: t('Scanning {0}…', entry.host) },
+async function ensureServerSaved(entry: SshHostEntry): Promise<ServerConfig> {
+  const existing = getServers().find((s) => s.host === entry.host && s.user === entry.user);
+  if (existing) {
+    return existing;
+  }
+  const server: ServerConfig = {
+    name: uniqueServerName(entry.host),
+    host: entry.host,
+    user: entry.user,
+    port: entry.port,
+    folders: [],
+  };
+  await addServer(server);
+  return server;
+}
+
+async function localListSubdirs(path: string): Promise<string[] | undefined> {
+  try {
+    const entries = await fsp.readdir(path, { withFileTypes: true });
+    return entries.filter((e) => e.isDirectory()).map((e) => e.name);
+  } catch {
+    return undefined;
+  }
+}
+
+function remoteListSubdirs(server: ServerConfig): (path: string) => Promise<string[] | undefined> {
+  return async (path: string) => {
+    const res = await execRemote(server, `ls -1Ap ${shq(path)} 2>/dev/null | grep '/$' | sed 's|/$||'`, 15_000);
+    if (res.code !== 0 && !res.stdout.trim()) {
+      return undefined;
+    }
+    return res.stdout
+      .split('\n')
+      .map((s) => s.trim())
+      .filter(Boolean);
+  };
+}
+
+async function addRemoteDirectory(server: ServerConfig, provider: WorkspaceProvider): Promise<void> {
+  const probe = await vscode.window.withProgress(
+    { location: vscode.ProgressLocation.Notification, title: t('Scanning {0}…', server.host) },
     async () => {
       try {
-        const res = await execRemote(server, buildDiscoveryScript(getSessionLimit()));
+        const [res, homeRes] = await Promise.all([
+          execRemote(server, buildDiscoveryScript(getSessionLimit())),
+          execRemote(server, 'echo $HOME', 10_000),
+        ]);
         const { sessions } = parseDiscoveryOutput(res.stdout);
-        return [...new Set(sessions.map((s) => s.cwd).filter(Boolean))].sort();
+        const cwds = [...new Set(sessions.map((s) => s.cwd).filter(Boolean))].sort();
+        return { cwds, home: homeRes.stdout.trim() || '/' };
       } catch {
         return undefined;
       }
     },
   );
-  if (dirs === undefined) {
+  if (probe === undefined) {
     vscode.window.showErrorMessage(
-      t('Failed to scan {0} (check ssh key auth works non-interactively)', entry.host),
+      t('Failed to scan {0} (check ssh key auth works non-interactively)', server.host),
     );
     return;
   }
-  const existing = getServers().find((s) => s.host === entry.host && s.user === entry.user);
-
-  if (dirs.length === 0) {
-    if (!existing) {
-      await confirmAndSave(entry, provider);
-    } else {
-      vscode.window.showInformationMessage(t('No sessions found on {0}', entry.host));
-    }
+  const result = await pickDirectory({
+    title: t('Add directory on {0}', server.name),
+    sessionDirs: probe.cwds,
+    listSubdirs: remoteListSubdirs(server),
+    homeDir: probe.home,
+  });
+  if (!result || result.kind !== 'dir') {
     return;
   }
-
-  const chosen = await vscode.window.showQuickPick(
-    dirs.map((p) => ({ label: `$(folder) ${pathBasename(p)}`, description: p, dir: p })),
-    { placeHolder: t('Select a directory on {0}', entry.host) },
-  );
-  if (!chosen) {
-    return;
-  }
-  if (existing) {
-    await addServerFolders(existing.name, [chosen.dir]);
-    provider.refresh();
-    vscode.window.showInformationMessage(t('Directory {0} added to {1}', chosen.dir, existing.name));
-  } else {
-    await confirmAndSave(entry, provider, [chosen.dir]);
-  }
+  await addServerFolders(server.name, [result.path]);
+  provider.refresh();
+  vscode.window.showInformationMessage(t('Directory {0} added to {1}', result.path, server.name));
 }
 
-interface DirPick extends vscode.QuickPickItem {
-  dir?: string;
-  other?: boolean;
-}
-
-async function addDirectoryFlow(provider: WorkspaceProvider): Promise<void> {
+async function addOtherServerFlow(provider: WorkspaceProvider): Promise<void> {
   const ctx = getCurrentContext();
+  const picked = await pickOtherServer(ctx.isLocal, ctx.sshHost);
+  if (!picked) {
+    return;
+  }
+  if (picked === 'manual') {
+    await manualAddServerFlow(provider);
+    return;
+  }
+  const server = await ensureServerSaved(picked);
+  provider.refresh();
+  await addRemoteDirectory(server, provider);
+}
 
+async function addLocalDirectoryFlow(provider: WorkspaceProvider): Promise<void> {
   const { sessions } = await provider.store.sessionsFor(CURRENT_SERVER_KEY, undefined);
   const wsPaths = (vscode.workspace.workspaceFolders ?? []).map((f) => f.uri.fsPath);
   const seen = new Set<string>();
@@ -236,37 +270,52 @@ async function addDirectoryFlow(provider: WorkspaceProvider): Promise<void> {
   }
   cwds.sort();
 
-  const picks: DirPick[] = cwds.map((p) => ({ label: `$(folder) ${pathBasename(p)}`, description: p, dir: p }));
-  picks.push({ label: `$(plug) ${t('Connect to another server…')}`, alwaysShow: true, other: true });
-
-  const chosen = await vscode.window.showQuickPick(picks, {
-    placeHolder: t('Add a directory of the current server to the workspace'),
+  const result = await pickDirectory({
+    title: t('Add directory (current server)'),
+    sessionDirs: cwds,
+    listSubdirs: localListSubdirs,
+    homeDir: os.homedir(),
+    extraAction: { label: `$(plug) ${t('Connect to another server…')}` },
   });
-  if (!chosen) {
+  if (!result) {
     return;
   }
-  if (chosen.dir) {
-    const ok = vscode.workspace.updateWorkspaceFolders(cwds.length ? (vscode.workspace.workspaceFolders?.length ?? 0) : 0, 0, {
-      uri: vscode.Uri.file(chosen.dir),
-    });
-    if (ok) {
-      provider.refresh();
-    } else {
-      vscode.window.showInformationMessage(t('Directory is already in the workspace'));
-    }
+  if (result.kind === 'action') {
+    await addOtherServerFlow(provider);
     return;
   }
+  const ok = vscode.workspace.updateWorkspaceFolders(vscode.workspace.workspaceFolders?.length ?? 0, 0, {
+    uri: vscode.Uri.file(result.path),
+  });
+  if (ok) {
+    provider.refresh();
+  } else {
+    vscode.window.showInformationMessage(t('Directory is already in the workspace'));
+  }
+}
 
-  // 二级：其他服务器（ssh config 主机列表 / 手动输入）
-  const picked = await pickOtherServer(ctx.isLocal, ctx.sshHost);
-  if (!picked) {
+function resolveTargetServer(provider: WorkspaceProvider, node?: ServerNode): ServerConfig | undefined {
+  if (node?.server && !node.isCurrent) {
+    return node.server;
+  }
+  const sel = provider.selectedNode;
+  if (!sel) {
+    return undefined;
+  }
+  const key = sel.kind === 'server' ? (sel.isCurrent ? undefined : sel.key) : 'serverKey' in sel ? sel.serverKey : undefined;
+  if (!key || key === CURRENT_SERVER_KEY) {
+    return undefined;
+  }
+  return getServers().find((s) => s.name === key);
+}
+
+async function addDirectoryFlow(provider: WorkspaceProvider, node?: ServerNode): Promise<void> {
+  const target = resolveTargetServer(provider, node);
+  if (target) {
+    await addRemoteDirectory(target, provider);
     return;
   }
-  if (picked === 'manual') {
-    await manualAddServerFlow(provider);
-    return;
-  }
-  await addRemoteDirectoryFlow(picked, provider);
+  await addLocalDirectoryFlow(provider);
 }
 
 export function registerCommands(context: vscode.ExtensionContext, provider: WorkspaceProvider): void {
@@ -276,7 +325,7 @@ export function registerCommands(context: vscode.ExtensionContext, provider: Wor
 
   reg('agentWorkspace.refresh', () => provider.refresh());
 
-  reg('agentWorkspace.addServer', () => addDirectoryFlow(provider));
+  reg('agentWorkspace.addServer', (node?: ServerNode) => addDirectoryFlow(provider, node));
 
   reg('agentWorkspace.removeServer', async (node: ServerNode) => {
     if (!node?.server) {

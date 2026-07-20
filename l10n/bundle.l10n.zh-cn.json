@@ -72,5 +72,10 @@
   "Directory {0} added to {1}": "已将目录 {0} 添加到 {1}",
   "Directory is already in the workspace": "目录已在 workspace 中",
   "Failed to scan {0} (check ssh key auth works non-interactively)": "扫描 {0} 失败（请确认 ssh 密钥免密可用）",
-  "No sessions found on {0}": "{0} 上未发现会话"
+  "No sessions found on {0}": "{0} 上未发现会话",
+  "Add directory (current server)": "添加目录（当前服务器）",
+  "Add directory on {0}": "在 {0} 上添加目录",
+  "Type a path to browse its subdirectories": "输入路径以浏览其子目录",
+  "Open {0}": "打开 {0}",
+  "Directory does not exist: {0}": "目录不存在: {0}"
 }

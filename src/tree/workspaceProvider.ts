@@ -117,6 +117,7 @@ export class SessionStore {
 
 export class WorkspaceProvider implements vscode.TreeDataProvider<Node> {
   readonly store = new SessionStore();
+  selectedNode?: Node;
   private readonly onDidChangeEmitter = new vscode.EventEmitter<Node | undefined>();
   readonly onDidChangeTreeData = this.onDidChangeEmitter.event;
   private wsPathsCache?: Promise<string[]>;
@@ -285,22 +286,17 @@ export class WorkspaceProvider implements vscode.TreeDataProvider<Node> {
         { kind: 'info', label: error.split('\n')[0].slice(0, 80), severity: 'warning', tooltip: error },
       ];
     }
-    const configured = (node.server?.folders ?? []).map((p) => ({
-      kind: 'folder' as const,
+    const pinnedPaths = (node.server?.folders ?? []).map(normPath);
+    const nodes: Node[] = pinnedPaths.map((p) => ({
+      kind: 'folder',
       serverKey: node.key,
       path: p,
       label: pathBasename(p) || p,
     }));
-    const configuredPaths = new Set(configured.map((f) => normPath(f.path)));
-    const derived = groupByCwd(sessions)
-      .filter((g) => !configuredPaths.has(normPath(g.folderPath)))
-      .map((g) => ({
-        kind: 'folder' as const,
-        serverKey: node.key,
-        path: g.folderPath,
-        label: pathBasename(g.folderPath) || g.folderPath,
-      }));
-    const nodes: Node[] = [...configured, ...derived];
+    const { others } = partitionSessions(sessions, pinnedPaths);
+    if (others.length > 0) {
+      nodes.push({ kind: 'otherSessions', serverKey: node.key });
+    }
     if (error) {
       nodes.unshift({ kind: 'info', label: t('Partial data unavailable'), severity: 'warning', tooltip: error });
     }
@@ -341,8 +337,11 @@ export class WorkspaceProvider implements vscode.TreeDataProvider<Node> {
   private async otherSessionsChildren(node: Extract<Node, { kind: 'otherSessions' }>): Promise<Node[]> {
     const server = node.serverKey === CURRENT_SERVER_KEY ? undefined : this.serverConfigFor(node.serverKey);
     const { sessions } = await this.store.sessionsFor(node.serverKey, server);
-    const wsPaths = await this.currentWsPaths();
-    const { others } = partitionSessions(sessions, wsPaths);
+    const pinnedPaths =
+      node.serverKey === CURRENT_SERVER_KEY
+        ? await this.currentWsPaths()
+        : (server?.folders ?? []).map(normPath);
+    const { others } = partitionSessions(sessions, pinnedPaths);
     return groupByCwd(others).map((g) => ({
       kind: 'folder',
       serverKey: node.serverKey,
