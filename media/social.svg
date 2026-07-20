@@ -1,26 +1,22 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1280" height="640" viewBox="0 0 1280 640">
   <defs>
     <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
-      <stop offset="0" stop-color="#0b1226"/>
-      <stop offset="1" stop-color="#1e1b4b"/>
+      <stop offset="0" stop-color="#0a0f24"/>
+      <stop offset="1" stop-color="#151b3d"/>
     </linearGradient>
     <linearGradient id="hex" x1="0" y1="0" x2="1" y2="1">
       <stop offset="0" stop-color="#0ea5e9"/>
-      <stop offset="1" stop-color="#a855f7"/>
-    </linearGradient>
-    <linearGradient id="vv" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0" stop-color="#ffffff"/>
-      <stop offset="1" stop-color="#dbe4ff"/>
+      <stop offset="1" stop-color="#8b5cf6"/>
     </linearGradient>
   </defs>
   <rect width="1280" height="640" fill="url(#bg)"/>
-  <g opacity="0.08">
-    <circle cx="1150" cy="80" r="220" fill="#0ea5e9"/>
-    <circle cx="80" cy="580" r="180" fill="#22d3ee"/>
+  <g opacity="0.07">
+    <circle cx="1170" cy="70" r="230" fill="#0ea5e9"/>
+    <circle cx="60" cy="600" r="190" fill="#8b5cf6"/>
   </g>
 
-  <!-- logo -->
-  <g transform="translate(90,120)">
+  <!-- logo mark -->
+  <g transform="translate(90,96)">
     <path fill="url(#hex)" d="M96 9 171 52v86L96 181 21 138V52L96 9z"/>
     <path fill="none" stroke="#ffffff" stroke-opacity="0.25" stroke-width="4" d="M96 24 156 58.5v73L96 166 36 131.5v-73L96 24z"/>
     <g stroke="#ffffff" stroke-width="7" stroke-linecap="round">
@@ -34,42 +30,48 @@
     <circle cx="96" cy="147" r="10" fill="#a5f3fc"/>
   </g>
 
-  <text x="90" y="380" font-family="Segoe UI, Helvetica, Arial, sans-serif" font-size="64" font-weight="700" fill="#f8fafc">Agent Dock</text>
-  <text x="92" y="432" font-family="Segoe UI, Helvetica, Arial, sans-serif" font-size="26" fill="#94a3b8">Cross-server AI agent workspace for VS Code</text>
-  <text x="92" y="470" font-family="Segoe UI, Helvetica, Arial, sans-serif" font-size="24" fill="#64748b">跨服务器 AI Agent 会话工作区 · 文件与会话一窗统览</text>
+  <text x="90" y="368" font-family="Segoe UI, Helvetica, Arial, sans-serif" font-size="62" font-weight="700" fill="#f8fafc">Agent Dock</text>
+  <text x="92" y="420" font-family="Segoe UI, Helvetica, Arial, sans-serif" font-size="25" fill="#94a3b8">Cross-server AI agent workspace for VS Code</text>
+  <text x="92" y="458" font-family="Segoe UI, Helvetica, Arial, sans-serif" font-size="23" fill="#64748b">跨服务器 AI Agent 会话工作区 · 文件与会话一窗统览</text>
 
-  <g font-family="Segoe UI, Helvetica, Arial, sans-serif" font-size="20">
-    <rect x="90" y="510" width="150" height="44" rx="22" fill="#312e81"/>
-    <text x="118" y="539" fill="#c7d2fe">opencode</text>
-    <rect x="256" y="510" width="118" height="44" rx="22" fill="#134e4a"/>
-    <text x="288" y="539" fill="#99f6e4">Codex</text>
-    <rect x="390" y="510" width="158" height="44" rx="22" fill="#7c2d12"/>
-    <text x="412" y="539" fill="#fed7aa">Claude Code</text>
+  <g font-family="Segoe UI, Helvetica, Arial, sans-serif" font-size="19">
+    <rect x="90" y="502" width="146" height="42" rx="21" fill="#312e81"/>
+    <text x="117" y="530" fill="#c7d2fe">opencode</text>
+    <rect x="252" y="502" width="112" height="42" rx="21" fill="#134e4a"/>
+    <text x="283" y="530" fill="#99f6e4">Codex</text>
+    <rect x="380" y="502" width="152" height="42" rx="21" fill="#7c2d12"/>
+    <text x="401" y="530" fill="#fed7aa">Claude Code</text>
   </g>
 
-  <!-- tree mock -->
-  <g transform="translate(730,90)">
-    <rect width="460" height="470" rx="16" fill="#0f172a" stroke="#334155"/>
-    <rect x="0" y="0" width="460" height="42" rx="16" fill="#1e293b"/>
-    <circle cx="24" cy="21" r="6" fill="#22d3ee"/>
-    <text x="42" y="28" font-family="Segoe UI, Helvetica, Arial, sans-serif" font-size="17" fill="#e2e8f0">Agent Dock — Workspace</text>
+  <!-- product mock -->
+  <g transform="translate(716,76)">
+    <rect width="478" height="496" rx="16" fill="#0f172a" stroke="#334155"/>
+    <rect x="0" y="0" width="478" height="40" rx="16" fill="#1e293b"/>
+    <circle cx="22" cy="20" r="6" fill="#38bdf8"/>
+    <text x="38" y="26" font-family="Segoe UI, Helvetica, Arial, sans-serif" font-size="16" fill="#e2e8f0">Agent Dock — Workspace</text>
 
-    <text x="24" y="82" font-family="Segoe UI, Helvetica, Arial, sans-serif" font-size="18" fill="#e2e8f0">▾ ⬡ 当前服务器 <tspan fill="#64748b" font-size="15">· connected</tspan></text>
-    <text x="48" y="118" font-family="Segoe UI, Helvetica, Arial, sans-serif" font-size="16" fill="#94a3b8">▾ 📁 my-project</text>
-    <text x="72" y="150" font-family="Segoe UI, Helvetica, Arial, sans-serif" font-size="15" fill="#64748b">▸ src/  package.json  README.md</text>
-    <text x="72" y="182" font-family="Segoe UI, Helvetica, Arial, sans-serif" font-size="15" fill="#94a3b8">▾ 💬 sessions</text>
-    <rect x="92" y="192" width="336" height="26" rx="6" fill="#1e293b"/>
-    <text x="100" y="210" font-family="Segoe UI, Helvetica, Arial, sans-serif" font-size="14" fill="#c4b5fd">⚡ 插件开发方案讨论 · opencode · 2小时前</text>
-    <rect x="92" y="224" width="300" height="26" rx="6" fill="#1e293b"/>
-    <text x="100" y="242" font-family="Segoe UI, Helvetica, Arial, sans-serif" font-size="14" fill="#5eead4">🤖 登录 bug 排查 · Codex · 昨天</text>
+    <text x="22" y="74" font-family="Segoe UI, Helvetica, Arial, sans-serif" font-size="17" fill="#e2e8f0">▾ ⬡ 当前服务器 <tspan fill="#64748b" font-size="14">· connected</tspan></text>
+    <text x="44" y="106" font-family="Segoe UI, Helvetica, Arial, sans-serif" font-size="15" fill="#94a3b8">▾ 📁 my-project</text>
+    <text x="66" y="134" font-family="Segoe UI, Helvetica, Arial, sans-serif" font-size="14" fill="#64748b">▸ src/   package.json   README.md</text>
+    <text x="66" y="162" font-family="Segoe UI, Helvetica, Arial, sans-serif" font-size="14" fill="#94a3b8">▾ 💬 sessions</text>
+    <rect x="84" y="171" width="360" height="26" rx="6" fill="#1e293b"/>
+    <text x="92" y="189" font-family="Segoe UI, Helvetica, Arial, sans-serif" font-size="13.5" fill="#c4b5fd">⚡ 插件开发方案讨论 · opencode · 2小时前</text>
+    <rect x="84" y="203" width="322" height="26" rx="6" fill="#1e293b"/>
+    <text x="92" y="221" font-family="Segoe UI, Helvetica, Arial, sans-serif" font-size="13.5" fill="#5eead4">🤖 登录 bug 排查 · Codex · 昨天</text>
 
-    <text x="24" y="292" font-family="Segoe UI, Helvetica, Arial, sans-serif" font-size="18" fill="#e2e8f0">▾ ⬡ gpu-server-01</text>
-    <text x="48" y="328" font-family="Segoe UI, Helvetica, Arial, sans-serif" font-size="16" fill="#94a3b8">▾ 📁 training</text>
-    <rect x="68" y="338" width="300" height="26" rx="6" fill="#1e293b"/>
-    <text x="76" y="356" font-family="Segoe UI, Helvetica, Arial, sans-serif" font-size="14" fill="#fdba74">✨ 数据集清洗脚本 · Claude · 3天前</text>
-    <rect x="68" y="370" width="264" height="26" rx="6" fill="#1e293b"/>
-    <text x="76" y="388" font-family="Segoe UI, Helvetica, Arial, sans-serif" font-size="14" fill="#c4b5fd">⚡ batch 评测 · opencode · 3天前</text>
+    <text x="22" y="266" font-family="Segoe UI, Helvetica, Arial, sans-serif" font-size="17" fill="#e2e8f0">▾ ⬡ gpu-server-01</text>
+    <text x="44" y="298" font-family="Segoe UI, Helvetica, Arial, sans-serif" font-size="15" fill="#94a3b8">▾ 📁 training</text>
+    <rect x="62" y="307" width="312" height="26" rx="6" fill="#1e293b"/>
+    <text x="70" y="325" font-family="Segoe UI, Helvetica, Arial, sans-serif" font-size="13.5" fill="#fdba74">✨ 数据集清洗脚本 · Claude · 3天前</text>
+    <rect x="62" y="339" width="272" height="26" rx="6" fill="#1e293b"/>
+    <text x="70" y="357" font-family="Segoe UI, Helvetica, Arial, sans-serif" font-size="13.5" fill="#c4b5fd">⚡ batch 评测 · opencode · 3天前</text>
+    <text x="22" y="400" font-family="Segoe UI, Helvetica, Arial, sans-serif" font-size="17" fill="#e2e8f0">▸ ⬡ backup-server</text>
 
-    <text x="24" y="436" font-family="Segoe UI, Helvetica, Arial, sans-serif" font-size="18" fill="#e2e8f0">▸ ⬡ backup-server</text>
+    <!-- monitor hint card -->
+    <rect x="22" y="420" width="434" height="56" rx="10" fill="#111c33" stroke="#1e3a5f"/>
+    <text x="36" y="444" font-family="Segoe UI, Helvetica, Arial, sans-serif" font-size="13" fill="#7dd3fc">📊 会话监控 · skills 3 ≈12.4k tok</text>
+    <rect x="36" y="454" width="180" height="8" rx="4" fill="#1d4ed8"/>
+    <rect x="226" y="454" width="110" height="8" rx="4" fill="#3b82f6"/>
+    <rect x="346" y="454" width="70" height="8" rx="4" fill="#60a5fa"/>
   </g>
 </svg>
