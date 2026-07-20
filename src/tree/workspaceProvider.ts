@@ -194,8 +194,8 @@ export class WorkspaceProvider implements vscode.TreeDataProvider<Node> {
           node.name,
           node.isDir ? vscode.TreeItemCollapsibleState.Collapsed : vscode.TreeItemCollapsibleState.None,
         );
-        item.iconPath = node.isDir ? vscode.ThemeIcon.Folder : vscode.ThemeIcon.File;
         item.contextValue = node.isDir ? 'fsDir' : 'fsFile';
+        // 只设 resourceUri：文件图标主题与全局装饰（git 状态、Problems、AI 徽标）自动生效
         item.resourceUri = node.uri;
         if (!node.isDir) {
           item.command = {
