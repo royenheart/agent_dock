@@ -194,7 +194,7 @@ export function renderOpencodeTranscript(stdout: string): ChatMessage[] {
   let current: string | null = null;
   let buf: string[] = [];
   for (const line of stdout.split('\n')) {
-    const m = /^===AGENTWS:([a-z-]+)===$/.exec(line);
+    const m = /^===AGENTWS:(json|messages|parts|error|full|truncated)===$/.exec(line);
     if (m) {
       if (current !== null) {
         sections.set(current, buf.join('\n'));

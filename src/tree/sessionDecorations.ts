@@ -1,19 +1,7 @@
 import * as vscode from 'vscode';
 import type { SessionStore } from './workspaceProvider';
 import { CURRENT_SERVER_KEY } from './workspaceProvider';
-
-function normPath(p: string): string {
-  return p.length > 1 && p.endsWith('/') ? p.slice(0, -1) : p;
-}
-
-function isUnder(child: string, parent: string): boolean {
-  const c = normPath(child);
-  const p = normPath(parent);
-  if (p === '/') {
-    return c.startsWith('/');
-  }
-  return c === p || c.startsWith(`${p}/`);
-}
+import { isUnder } from '../paths';
 
 /**
  * 在内置资源管理器（及本扩展的文件节点）上，为包含 agent 会话的目录加 AI 徽标。

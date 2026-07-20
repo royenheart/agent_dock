@@ -9,7 +9,7 @@ interface RawSession {
   path?: string;
 }
 
-const SECTION_RE = /^===AGENTWS:([a-z-]+)===$/;
+const SECTION_RE = /^===AGENTWS:(meta|json|opencode|codex-index|codex|claude|end)===$/;
 const FILE_MARKER = '===AGENTWS:file===';
 
 function toMs(value: unknown): number {

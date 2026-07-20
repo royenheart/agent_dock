@@ -1,6 +1,6 @@
 import * as vscode from 'vscode';
 import type { ServerConfig } from './model';
-import { addServer, getConnectInNewWindow, getServers, removeServer } from './config';
+import { addServer, getConnectInNewWindow, getCurrentContext, getServers, hostMatches, removeServer } from './config';
 import { resumeCommand } from './agents/resume';
 import { sshDestination, shq } from './ssh/remoteExec';
 import { readSshConfigHosts, type SshHostEntry } from './ssh/sshConfig';
@@ -79,19 +79,39 @@ async function addServerFlow(provider: WorkspaceProvider): Promise<void> {
   interface HostPick extends vscode.QuickPickItem {
     entry?: SshHostEntry;
   }
+  const ctx = getCurrentContext();
   const hosts = await readSshConfigHosts();
-  const picks: HostPick[] = hosts.map((h) => ({
-    label: h.host,
-    description: [h.user ? `${h.user}@` : '', h.hostName ?? '', h.port ? `:${h.port}` : ''].join(''),
-    entry: h,
-  }));
+  const picks: HostPick[] = [];
+
+  if (!ctx.isLocal && ctx.sshHost) {
+    const already = getServers().some((s) => hostMatches(ctx.sshHost!, s));
+    if (!already) {
+      const at = ctx.sshHost.indexOf('@');
+      picks.push({
+        label: `$(remote) 当前连接: ${ctx.sshHost}`,
+        description: '把当前服务器保存到列表',
+        entry: {
+          host: at >= 0 ? ctx.sshHost.slice(at + 1) : ctx.sshHost,
+          user: at >= 0 ? ctx.sshHost.slice(0, at) : undefined,
+        },
+      });
+      picks.push({ label: '其他服务器', kind: vscode.QuickPickItemKind.Separator });
+    }
+  }
+  for (const h of hosts) {
+    picks.push({
+      label: h.host,
+      description: [h.user ? `${h.user}@` : '', h.hostName ?? '', h.port ? `:${h.port}` : ''].join(''),
+      entry: h,
+    });
+  }
   picks.push({ label: '$(pencil) 手动输入…', description: '不选择 ssh config 中的主机', alwaysShow: true });
 
+  const fromWhere = ctx.isLocal
+    ? '从本机 ~/.ssh/config 选择主机'
+    : `ssh 主机列表来自当前连接的 ${ctx.sshHost ?? '远程机'} 的 ~/.ssh/config（VS Code 扩展运行在远程，无法读取本机文件；需要本机列表请在本地窗口中添加）`;
   const chosen = await vscode.window.showQuickPick(picks, {
-    placeHolder:
-      hosts.length > 0
-        ? '从 ~/.ssh/config 选择主机（或手动输入）'
-        : '未在 ~/.ssh/config 中找到主机，请选择手动输入',
+    placeHolder: fromWhere,
     matchOnDescription: true,
   });
   if (!chosen) {

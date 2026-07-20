@@ -208,12 +208,17 @@
   "scripts": {
     "compile": "tsc -p ./",
     "watch": "tsc -watch -p ./",
+    "test": "npm run test:unit",
+    "test:unit": "node --test \"test/unit/*.test.js\"",
+    "test:e2e": "xvfb-run -a node test/e2e/runTest.js",
     "vscode:prepublish": "npm run compile"
   },
   "devDependencies": {
     "@types/node": "^22.10.0",
     "@types/vscode": "^1.96.0",
+    "@vscode/test-electron": "^3.0.0",
     "@vscode/vsce": "^3.9.2",
+    "mocha": "^11.7.6",
     "typescript": "^5.7.0"
   }
 }

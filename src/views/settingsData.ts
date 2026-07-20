@@ -150,8 +150,8 @@ async function gatherSkills(home: string): Promise<SettingsItem[]> {
   return out;
 }
 
-export async function gatherSettings(serverLabel: string): Promise<SettingsData> {
-  const home = os.homedir();
+export async function gatherSettings(serverLabel: string, homeDir?: string): Promise<SettingsData> {
+  const home = homeDir ?? os.homedir();
   const byAgent: Record<AgentKind, AgentBucket> = {
     claude: emptyBucket(),
     codex: emptyBucket(),

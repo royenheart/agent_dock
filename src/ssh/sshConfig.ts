@@ -41,8 +41,10 @@ async function expandInclude(pattern: string, baseDir: string): Promise<string[]
 /**
  * 解析 ~/.ssh/config（含 Include 指令）中的主机别名。
  * 跳过通配符 Host（* ? !）与 Match 块；同一字段首现值优先（与 OpenSSH 一致）。
+ * homeDir 可注入以便测试；默认取扩展宿主机（=当前连接机器）的 home。
  */
-export async function readSshConfigHosts(): Promise<SshHostEntry[]> {
+export async function readSshConfigHosts(homeDir?: string): Promise<SshHostEntry[]> {
+  const home = homeDir ?? os.homedir();
   const out: SshHostEntry[] = [];
   const seen = new Set<string>();
   const visited = new Set<string>();
@@ -110,6 +112,6 @@ export async function readSshConfigHosts(): Promise<SshHostEntry[]> {
     }
   };
 
-  await parseFile(path.join(os.homedir(), '.ssh', 'config'), 0);
+  await parseFile(path.join(home, '.ssh', 'config'), 0);
   return out;
 }

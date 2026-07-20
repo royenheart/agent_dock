@@ -1,17 +1,19 @@
 import * as vscode from 'vscode';
-import * as fsp from 'node:fs/promises';
 import type { AgentKind, AgentSession, ServerConfig } from '../model';
 import { AGENT_LABEL } from '../model';
 import { classifyServers, getCurrentContext, getServers, getSessionLimit } from '../config';
 import { buildDiscoveryScript } from '../agents/discoveryScript';
 import { parseDiscoveryOutput } from '../agents/parse';
 import { execLocal, execRemote } from '../ssh/remoteExec';
+import { isUnder, pathBasename, realpathSafe } from '../paths';
+import { groupByCwd, partitionSessions } from './structure';
 
 export const CURRENT_SERVER_KEY = '__current__';
 
 export type Node =
   | { kind: 'server'; key: string; label: string; isCurrent: boolean; server?: ServerConfig }
   | { kind: 'folder'; serverKey: string; path: string; label: string; workspaceUri?: vscode.Uri }
+  | { kind: 'otherSessions'; serverKey: string }
   | { kind: 'sessionsRoot'; serverKey: string; folderPath: string }
   | { kind: 'session'; serverKey: string; session: AgentSession }
   | { kind: 'fsEntry'; uri: vscode.Uri; name: string; isDir: boolean }
@@ -45,32 +47,6 @@ function formatRelative(ms: number): string {
   }
   const d = new Date(ms);
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-}
-
-function pathBasename(p: string): string {
-  const parts = p.replace(/\\/g, '/').split('/').filter(Boolean);
-  return parts[parts.length - 1] ?? p;
-}
-
-function normPath(p: string): string {
-  return p.length > 1 && p.endsWith('/') ? p.slice(0, -1) : p;
-}
-
-function isUnder(child: string, parent: string): boolean {
-  const c = normPath(child);
-  const p = normPath(parent);
-  if (p === '/') {
-    return c.startsWith('/');
-  }
-  return c === p || c.startsWith(`${p}/`);
-}
-
-async function realpathSafe(p: string): Promise<string> {
-  try {
-    return await fsp.realpath(p);
-  } catch {
-    return p;
-  }
 }
 
 /** Caches per-server session scans; fetch happens lazily on first expand. */
@@ -142,10 +118,21 @@ export class WorkspaceProvider implements vscode.TreeDataProvider<Node> {
   readonly store = new SessionStore();
   private readonly onDidChangeEmitter = new vscode.EventEmitter<Node | undefined>();
   readonly onDidChangeTreeData = this.onDidChangeEmitter.event;
+  private wsPathsCache?: Promise<string[]>;
 
   refresh(key?: string): void {
+    this.wsPathsCache = undefined;
     this.store.invalidate(key);
     this.onDidChangeEmitter.fire(undefined);
+  }
+
+  private currentWsPaths(): Promise<string[]> {
+    if (!this.wsPathsCache) {
+      this.wsPathsCache = Promise.all(
+        (vscode.workspace.workspaceFolders ?? []).map((f) => realpathSafe(f.uri.fsPath)),
+      );
+    }
+    return this.wsPathsCache;
   }
 
   getTreeItem(node: Node): vscode.TreeItem {
@@ -171,6 +158,13 @@ export class WorkspaceProvider implements vscode.TreeDataProvider<Node> {
         const item = new vscode.TreeItem('sessions', vscode.TreeItemCollapsibleState.Collapsed);
         item.iconPath = new vscode.ThemeIcon('comment-discussion');
         item.contextValue = 'sessionsRoot';
+        return item;
+      }
+      case 'otherSessions': {
+        const item = new vscode.TreeItem('其他目录会话', vscode.TreeItemCollapsibleState.Collapsed);
+        item.iconPath = new vscode.ThemeIcon('history');
+        item.contextValue = 'otherSessions';
+        item.tooltip = 'cwd 不在任何 workspace 目录下的会话';
         return item;
       }
       case 'session': {
@@ -235,6 +229,8 @@ export class WorkspaceProvider implements vscode.TreeDataProvider<Node> {
         return this.folderChildren(node);
       case 'sessionsRoot':
         return this.sessionsUnder(node.serverKey, node.folderPath);
+      case 'otherSessions':
+        return this.otherSessionsChildren(node);
       case 'fsEntry':
         return node.isDir ? this.dirChildren(node.uri) : [];
       default:
@@ -289,11 +285,11 @@ export class WorkspaceProvider implements vscode.TreeDataProvider<Node> {
       ];
     }
     const folders = groupByCwd(sessions);
-    const nodes: Node[] = folders.map(([cwd]) => ({
+    const nodes: Node[] = folders.map((g) => ({
       kind: 'folder',
       serverKey: node.key,
-      path: cwd,
-      label: pathBasename(cwd) || cwd,
+      path: g.folderPath,
+      label: pathBasename(g.folderPath) || g.folderPath,
     }));
     if (error) {
       nodes.unshift({ kind: 'info', label: '部分数据不可用', severity: 'warning', tooltip: error });
@@ -304,30 +300,23 @@ export class WorkspaceProvider implements vscode.TreeDataProvider<Node> {
     return nodes;
   }
 
-  private currentServerChildren(sessions: AgentSession[], error?: string): Node[] {
+  private async currentServerChildren(sessions: AgentSession[], error?: string): Promise<Node[]> {
     const nodes: Node[] = [];
     const wsFolders = vscode.workspace.workspaceFolders ?? [];
-    const covered = new Set<string>();
-    for (const f of wsFolders) {
-      const fsPath = f.uri.fsPath;
-      for (const s of sessions) {
-        if (s.cwd && isUnder(s.cwd, fsPath)) {
-          covered.add(`${s.agent}:${s.id}`);
-        }
-      }
+    const wsPaths = await this.currentWsPaths();
+    const { others } = partitionSessions(sessions, wsPaths);
+
+    wsFolders.forEach((f, i) => {
       nodes.push({
         kind: 'folder',
         serverKey: CURRENT_SERVER_KEY,
-        path: fsPath,
-        label: pathBasename(fsPath),
+        path: wsPaths[i],
+        label: pathBasename(f.uri.fsPath),
         workspaceUri: f.uri,
       });
-    }
-
-    const rest = sessions.filter((s) => !covered.has(`${s.agent}:${s.id}`));
-    const extra = groupByCwd(rest);
-    for (const [cwd] of extra) {
-      nodes.push({ kind: 'folder', serverKey: CURRENT_SERVER_KEY, path: cwd, label: pathBasename(cwd) || cwd });
+    });
+    if (others.length > 0) {
+      nodes.push({ kind: 'otherSessions', serverKey: CURRENT_SERVER_KEY });
     }
 
     if (error) {
@@ -337,6 +326,19 @@ export class WorkspaceProvider implements vscode.TreeDataProvider<Node> {
       nodes.push({ kind: 'info', label: '无 workspace 目录，也未发现会话', severity: 'info' });
     }
     return nodes;
+  }
+
+  private async otherSessionsChildren(node: Extract<Node, { kind: 'otherSessions' }>): Promise<Node[]> {
+    const server = node.serverKey === CURRENT_SERVER_KEY ? undefined : this.serverConfigFor(node.serverKey);
+    const { sessions } = await this.store.sessionsFor(node.serverKey, server);
+    const wsPaths = await this.currentWsPaths();
+    const { others } = partitionSessions(sessions, wsPaths);
+    return groupByCwd(others).map((g) => ({
+      kind: 'folder',
+      serverKey: node.serverKey,
+      path: g.folderPath,
+      label: pathBasename(g.folderPath) || g.folderPath,
+    }));
   }
 
   private async folderChildren(node: Extract<Node, { kind: 'folder' }>): Promise<Node[]> {
@@ -388,17 +390,4 @@ export class WorkspaceProvider implements vscode.TreeDataProvider<Node> {
       return [{ kind: 'info', label: '目录读取失败', severity: 'warning' }];
     }
   }
-}
-
-function groupByCwd(sessions: AgentSession[]): [string, AgentSession[]][] {
-  const map = new Map<string, AgentSession[]>();
-  for (const s of sessions) {
-    const key = s.cwd || '/';
-    const list = map.get(key) ?? [];
-    list.push(s);
-    map.set(key, list);
-  }
-  return [...map.entries()].sort(
-    (a, b) => Math.max(...b[1].map((s) => s.timeUpdated)) - Math.max(...a[1].map((s) => s.timeUpdated)),
-  );
 }
