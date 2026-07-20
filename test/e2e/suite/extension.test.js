@@ -115,6 +115,16 @@ suite('agent-workspace e2e', () => {
     assert.ok(renamed, 'file renamed');
   });
 
+  test('remove-from-workspace command resolves and routes by node', async () => {
+    const children = await currentServerChildren();
+    const wsFolder = children.find((n) => n.kind === 'folder' && n.workspaceUri);
+    assert.ok(wsFolder, 'workspace folder node exists');
+    const result = await vscode.commands.executeCommand('agentWorkspace.fsRemoveFromWorkspace', wsFolder);
+    assert.equal(typeof result, 'boolean', 'command returns a boolean contract');
+    const bogus = await vscode.commands.executeCommand('agentWorkspace.fsRemoveFromWorkspace', { kind: 'folder', serverKey: 'x', path: '/x', label: 'x' });
+    assert.equal(bogus, false, 'non-workspace folder node is rejected');
+  });
+
   test('ssh config parsed from fixture HOME', async () => {
     const hosts = await readSshConfigHosts(process.env.HOME);
     assert.equal(hosts.length, 1);

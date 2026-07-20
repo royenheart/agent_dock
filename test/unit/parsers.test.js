@@ -210,3 +210,41 @@ test('claude: sidechain records carry subagent meta', () => {
   assert.ok(blocks[0].meta.includes('(subagent)'));
   assert.ok(blocks[0].meta.includes('m-x'));
 });
+
+test('skills: claude Skill tool pairs with est tokens and summary', () => {
+  const lines = [
+    { type: 'assistant', message: { content: [{ type: 'tool_use', id: 'sk1', name: 'Skill', input: { skill: 'writing-plans' } }] } },
+    { type: 'user', message: { content: [{ type: 'tool_result', tool_use_id: 'sk1', content: 'x'.repeat(400) }] } },
+  ].map((r) => JSON.stringify(r)).join('\n');
+  const acc = {};
+  const blocks = renderClaudeTranscript(lines, undefined, acc);
+  assert.equal(blocks[0].name, '⚡ skill: writing-plans');
+  assert.equal(blocks[0].estTokens, 100);
+  assert.equal(acc.skillCalls, 1);
+  assert.equal(acc.skillTokens, 100);
+});
+
+test('skills: opencode skill tool estimates from inline output', () => {
+  const dump = {
+    messages: [['m1', JSON.stringify({ role: 'assistant', time: { created: 1 } })]],
+    parts: [['m1', JSON.stringify({ type: 'tool', tool: 'skill', state: { status: 'completed', input: { name: 'frontend' }, output: 'y'.repeat(800) } })]],
+  };
+  const stdout = ['===AGENTWS:json===', JSON.stringify(dump)].join('\n');
+  const acc = {};
+  const blocks = renderOpencodeTranscript(stdout, undefined, acc);
+  assert.equal(blocks[0].name, '⚡ skill: frontend');
+  assert.equal(blocks[0].estTokens, 200);
+  assert.equal(acc.skillCalls, 1);
+});
+
+test('skills: codex skill function_call parses json args', () => {
+  const lines = [
+    { type: 'response_item', payload: { type: 'function_call', name: 'skill', call_id: 's1', arguments: JSON.stringify({ name: 'debugging' }) } },
+    { type: 'response_item', payload: { type: 'function_call_output', call_id: 's1', output: 'z'.repeat(200) } },
+  ].map((r) => JSON.stringify(r)).join('\n');
+  const acc = {};
+  const blocks = renderCodexTranscript(lines, undefined, acc);
+  assert.equal(blocks[0].name, '⚡ skill: debugging');
+  assert.equal(blocks[0].estTokens, 50);
+  assert.equal(acc.skillTokens, 50);
+});

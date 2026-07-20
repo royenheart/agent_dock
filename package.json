@@ -213,6 +213,12 @@
         "title": "%cmd.fsOpenTerminal%",
         "category": "Agent Workspace",
         "icon": "$(terminal)"
+      },
+      {
+        "command": "agentWorkspace.fsRemoveFromWorkspace",
+        "title": "%cmd.fsRemoveFromWorkspace%",
+        "category": "Agent Workspace",
+        "icon": "$(close)"
       }
     ],
     "menus": {
@@ -308,6 +314,11 @@
           "command": "agentWorkspace.fsOpenTerminal",
           "when": "view =~ /^agentWorkspace.workspace/ && (viewItem == fsDir || viewItem == folder.workspace)",
           "group": "5_terminal@1"
+        },
+        {
+          "command": "agentWorkspace.fsRemoveFromWorkspace",
+          "when": "view =~ /^agentWorkspace.workspace/ && viewItem == folder.workspace",
+          "group": "3_modify@3"
         }
       ]
     }

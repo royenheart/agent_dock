@@ -35,6 +35,34 @@ export interface TranscriptSummary {
   cacheRead?: number;
   cacheWrite?: number;
   cost?: number;
+  skillCalls?: number;
+  skillTokens?: number;
+}
+
+function estimateTokensFromChars(text: string): number {
+  return Math.max(1, Math.round(text.length / 4));
+}
+
+function skillNameOf(input: unknown): string | undefined {
+  if (!input || typeof input !== 'object') {
+    return undefined;
+  }
+  const i = input as Record<string, unknown>;
+  for (const key of ['skill', 'name', 'skill_name', 'command']) {
+    if (typeof i[key] === 'string' && (i[key] as string)) {
+      return i[key] as string;
+    }
+  }
+  return undefined;
+}
+
+function markSkillCall(acc: TranscriptSummary | undefined, output: string): number {
+  const est = estimateTokensFromChars(output);
+  if (acc) {
+    acc.skillCalls = (acc.skillCalls ?? 0) + 1;
+    acc.skillTokens = (acc.skillTokens ?? 0) + est;
+  }
+  return est;
 }
 
 export interface TranscriptResult {
@@ -144,6 +172,7 @@ export function renderClaudeTranscript(
 ): RenderBlock[] {
   const out: RenderBlock[] = [];
   const pendingTools = new Map<string, ToolBlock>();
+  const skillPending = new Set<ToolBlock>();
   for (const d of jsonLines(jsonl)) {
     const ts = tsOf(d.timestamp);
     const msg = d.message as Record<string, unknown> | undefined;
@@ -168,6 +197,10 @@ export function renderClaudeTranscript(
           if (pending) {
             pending.output = output;
             pending.isError = b.is_error === true;
+            if (skillPending.has(pending)) {
+              pending.estTokens = markSkillCall(acc, output);
+              skillPending.delete(pending);
+            }
             pendingTools.delete(String(b.tool_use_id));
           } else {
             out.push({ kind: 'tool', name: 'tool_result', input: '', output, isError: b.is_error === true, ts });
@@ -238,13 +271,17 @@ export function renderClaudeTranscript(
             pushTodoItems(out, (b.input as Record<string, unknown> | undefined)?.todos, ts);
             continue;
           }
+          const skillName = b.name === 'Skill' ? skillNameOf(b.input) : undefined;
           const block: ToolBlock = {
             kind: 'tool',
-            name: String(b.name ?? 'tool'),
+            name: skillName ? `⚡ skill: ${skillName}` : String(b.name ?? 'tool'),
             input: brief(b.input, TOOL_INPUT_PREVIEW),
             ts,
           };
           out.push(block);
+          if (skillName) {
+            skillPending.add(block);
+          }
           if (typeof b.id === 'string') {
             pendingTools.set(b.id, block);
           }
@@ -283,6 +320,7 @@ export function renderCodexTranscript(
   void strings;
   const out: RenderBlock[] = [];
   const pendingTools = new Map<string, ToolBlock>();
+  const skillPending = new Set<ToolBlock>();
   let lastModel: string | undefined;
   for (const d of jsonLines(jsonl)) {
     const p = d.payload as Record<string, unknown> | undefined;
@@ -320,13 +358,28 @@ export function renderCodexTranscript(
           out.push({ kind: 'thinking', text: truncate(summary, MAX_TEXT), ts });
         }
       } else if (p.type === 'function_call' || p.type === 'custom_tool_call') {
+        const rawArgs = p.arguments ?? p.input;
+        let parsedArgs: unknown;
+        if (typeof rawArgs === 'string') {
+          try {
+            parsedArgs = JSON.parse(rawArgs);
+          } catch {
+            parsedArgs = undefined;
+          }
+        } else {
+          parsedArgs = rawArgs;
+        }
+        const skillName = /skill/i.test(String(p.name ?? '')) ? skillNameOf(parsedArgs) : undefined;
         const block: ToolBlock = {
           kind: 'tool',
-          name: String(p.name ?? 'function'),
-          input: brief(p.arguments ?? p.input, TOOL_INPUT_PREVIEW),
+          name: skillName ? `⚡ skill: ${skillName}` : String(p.name ?? 'function'),
+          input: brief(rawArgs, TOOL_INPUT_PREVIEW),
           ts,
         };
         out.push(block);
+        if (skillName) {
+          skillPending.add(block);
+        }
         if (typeof p.call_id === 'string') {
           pendingTools.set(p.call_id, block);
         }
@@ -335,6 +388,10 @@ export function renderCodexTranscript(
         const pending = typeof p.call_id === 'string' ? pendingTools.get(p.call_id) : undefined;
         if (pending) {
           pending.output = output;
+          if (skillPending.has(pending)) {
+            pending.estTokens = markSkillCall(acc, output);
+            skillPending.delete(pending);
+          }
           pendingTools.delete(String(p.call_id));
         } else {
           out.push({ kind: 'tool', name: 'output', input: '', output, ts });
@@ -437,10 +494,10 @@ function splitTranscriptSections(stdout: string): Map<string, string> {
   return sections;
 }
 
-function renderOpencodeToolPart(part: Record<string, unknown>, ts: number | undefined): ToolBlock {
+function renderOpencodeToolPart(part: Record<string, unknown>, ts: number | undefined, acc?: TranscriptSummary): ToolBlock {
   const state = (part.state ?? {}) as Record<string, unknown>;
   const status = typeof state.status === 'string' ? state.status : undefined;
-  return {
+  const block: ToolBlock = {
     kind: 'tool',
     name: String(part.tool ?? 'tool'),
     input: brief(state.input ?? part.input, TOOL_INPUT_PREVIEW),
@@ -454,6 +511,14 @@ function renderOpencodeToolPart(part: Record<string, unknown>, ts: number | unde
     status,
     ts,
   };
+  if (part.tool === 'skill') {
+    const skillName = skillNameOf(state.input ?? part.input);
+    block.name = `⚡ skill: ${skillName ?? 'skill'}`;
+    if (block.output) {
+      block.estTokens = markSkillCall(acc, block.output);
+    }
+  }
+  return block;
 }
 
 export function renderOpencodeTranscript(
@@ -571,7 +636,7 @@ export function renderOpencodeTranscript(
       } else if (part.type === 'reasoning' && typeof part.text === 'string' && part.text.trim()) {
         out.push({ kind: 'thinking', text: truncate(part.text, MAX_TEXT), ts });
       } else if (part.type === 'tool') {
-        out.push(renderOpencodeToolPart(part, ts));
+        out.push(renderOpencodeToolPart(part, ts, acc));
       } else if (part.type === 'step-finish') {
         const tokens = part.tokens as Record<string, unknown> | undefined;
         if (tokens && typeof tokens.input === 'number') {
@@ -615,7 +680,7 @@ export function renderOpencodeTranscript(
           } else if (c.type === 'reasoning' && typeof c.text === 'string' && c.text.trim()) {
             out.push({ kind: 'thinking', text: truncate(c.text, MAX_TEXT), ts });
           } else if (c.type === 'tool') {
-            out.push(renderOpencodeToolPart(c, ts));
+            out.push(renderOpencodeToolPart(c, ts, acc));
           }
         }
       } else if (type === 'compaction') {

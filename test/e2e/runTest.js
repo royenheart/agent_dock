@@ -8,6 +8,7 @@ const RESULTS_FILE = '/tmp/agentws-e2e/mocha-results.txt';
 async function main() {
   const root = path.resolve(__dirname, '..', '..');
   const fx = makeFixtures();
+  const wsPath = process.env.E2E_WS === 'real' ? fx.REALWS : fx.LINKWS;
   fs.rmSync(RESULTS_FILE, { force: true });
   const exitCode = await runTests({
     vscodeExecutablePath: process.env.VSCODE_PATH || path.resolve(root, 'test', 'e2e', 'code-under-test.sh'),
@@ -15,7 +16,7 @@ async function main() {
     extensionTestsPath: path.resolve(root, 'test', 'e2e', 'suite', 'index.js'),
     extensionTestsEnv: { HOME: fx.HOME, AGENTWS_E2E_REALWS: fx.REALWS, VSCODE_IPC_HOOK_CLI: '' },
     launchArgs: [
-      fx.LINKWS,
+      wsPath,
       '--user-data-dir',
       path.join(fx.ROOT, 'user-data'),
       '--extensions-dir',

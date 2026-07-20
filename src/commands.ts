@@ -81,8 +81,18 @@ async function connectToServer(server: ServerConfig): Promise<void> {
     }
     return;
   }
+  let home = '/';
+  try {
+    const res = await execRemote(server, 'echo $HOME', 10_000);
+    const probed = res.stdout.trim();
+    if (probed.startsWith('/')) {
+      home = probed;
+    }
+  } catch {
+    home = '/';
+  }
   const authority = `ssh-remote+${server.user ? `${server.user}@` : ''}${server.host}${server.port ? `:${server.port}` : ''}`;
-  const uri = vscode.Uri.from({ scheme: 'vscode-remote', authority, path: '/' });
+  const uri = vscode.Uri.from({ scheme: 'vscode-remote', authority, path: home });
   await vscode.commands.executeCommand('vscode.openFolder', uri, {
     forceNewWindow: getConnectInNewWindow(),
   });
@@ -485,6 +495,26 @@ export function registerCommands(context: vscode.ExtensionContext, provider: Wor
     if (dir) {
       vscode.window.createTerminal({ cwd: dir.fsPath }).show();
     }
+  });
+
+  reg('agentWorkspace.fsRemoveFromWorkspace', (node: FolderNode): boolean => {
+    if (node?.kind !== 'folder' || !node.workspaceUri) {
+      return false;
+    }
+    const folders = vscode.workspace.workspaceFolders ?? [];
+    const index = folders.findIndex((f) => f.uri.toString() === node.workspaceUri!.toString());
+    if (index < 0) {
+      return false;
+    }
+    const ok = vscode.workspace.updateWorkspaceFolders(index, 1);
+    if (ok) {
+      vscode.window.showInformationMessage(t('Removed {0} from the workspace', node.label));
+    } else {
+      vscode.window.showWarningMessage(
+        t('Could not remove {0} programmatically — use "Remove Folder from Workspace" in the Explorer instead', node.label),
+      );
+    }
+    return ok;
   });
 
   reg('agentWorkspace.openSettings', async () => {

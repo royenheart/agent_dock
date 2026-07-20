@@ -127,6 +127,9 @@ function renderPage(
   if (summary?.cost) {
     summaryParts.push(`$${summary.cost.toFixed(3)}`);
   }
+  if (summary?.skillCalls) {
+    summaryParts.push(`skills ${summary.skillCalls} ≈${formatTokens(summary.skillTokens ?? 0)}`);
+  }
   const summaryLine = summaryParts.join(' · ');
   const payload = JSON.stringify({
     blocks: blocks ?? null,
@@ -250,12 +253,18 @@ function renderPage(
     d.append(el('div', '', b.text));
     return d;
   }
+  function fmtT(n) {
+    if (n < 1000) return String(n);
+    if (n < 1000000) return (n / 1000).toFixed(1) + 'k';
+    return (n / 1000000).toFixed(2) + 'M';
+  }
   function renderTool(b) {
     const card = el('div', 'toolcard' + (b.isError ? ' error' : ''));
     const head = el('div', 'toolhead');
-    head.append(el('span', '', '🔧'));
+    head.append(el('span', '', b.name && b.name.startsWith('⚡') ? '' : '🔧'));
     head.append(el('span', 'toolname', b.name));
     if (b.status) head.append(el('span', 'toolstatus', b.status));
+    if (b.estTokens) head.append(el('span', 'toolstatus', '≈' + fmtT(b.estTokens) + ' tok'));
     if (b.isError) head.append(el('span', 'toolstatus', 'error'));
     card.append(head);
     if (b.input) {
