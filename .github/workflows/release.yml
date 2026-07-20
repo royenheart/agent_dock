@@ -4,11 +4,13 @@ on:
   push:
     tags: ['v*']
 
+permissions:
+  contents: write
+  id-token: write # azure/login OIDC 必需
+
 jobs:
   release:
     runs-on: ubuntu-latest
-    permissions:
-      contents: write
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -25,8 +27,27 @@ jobs:
         with:
           files: '*.vsix'
           generate_release_notes: true
-      - name: Publish to VS Code Marketplace
-        if: env.VSCE_PAT != ''
+
+      # ── Marketplace 发布 ─────────────────────────────────────────────
+      # 首选：Entra ID 免密（OIDC + managed identity，PAT 退役后的官方方案）
+      # 需要在仓库配置 secrets: AZURE_CLIENT_ID / AZURE_TENANT_ID / AZURE_SUBSCRIPTION_ID
+      # 且该 managed identity 已在 Marketplace publisher 下授 Contributor
+      - name: Azure login (OIDC, managed identity)
+        if: ${{ secrets.AZURE_CLIENT_ID != '' }}
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+      - name: Publish via Entra ID credential
+        if: ${{ secrets.AZURE_CLIENT_ID != '' }}
+        run: npx @vscode/vsce publish --no-dependencies --azure-credential
+
+      # 兜底：PAT（全局 PAT 于 2026-12-01 退役，过渡用）
+      - name: Publish via PAT (transitional)
+        if: ${{ secrets.AZURE_CLIENT_ID == '' && secrets.VSCE_PAT != '' }}
         env:
           VSCE_PAT: ${{ secrets.VSCE_PAT }}
         run: npx @vscode/vsce publish --no-dependencies -p "$VSCE_PAT"
+
+      # 两套凭据都未配置时：只出 GitHub Release + vsix，不发布市场
