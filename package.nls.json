@@ -7,7 +7,7 @@
   "config.sessionLimit.description": "Max sessions scanned per agent per server (most recently updated first).",
   "config.connectInNewWindow.description": "Open the remote server in a new window when connecting (default: reuse the current window).",
   "cmd.refresh": "Refresh",
-  "cmd.addServer": "Add Server",
+  "cmd.addServer": "Add Directory",
   "cmd.removeServer": "Remove Server",
   "cmd.connect": "Connect to This Server",
   "cmd.connectTerminal": "Open SSH Terminal",

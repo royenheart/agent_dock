@@ -49,10 +49,44 @@ export class SessionPanel {
     panel.onDidDispose(() => SessionPanel.panels.delete(key));
 
     const disposables: vscode.Disposable[] = [];
+    const load = async (): Promise<void> => {
+      panel.webview.html = renderPage(panel.webview, target, undefined, t('Loading session…'));
+      try {
+        const script = buildTranscriptScript(target.session);
+        const res = target.server ? await execRemote(target.server, script) : await execLocal(script);
+        if (res.timedOut) {
+          panel.webview.html = renderPage(panel.webview, target, undefined, t('Timed out while fetching the session'));
+          return;
+        }
+        const blocks = renderTranscript(target.session, res.stdout, {
+          compactSummary: t('(compacted context summary — skipped)'),
+          truncatedNotice: t('Session file is large; showing the last 6 MiB only (earlier messages not loaded)'),
+          compactBoundary: t('— context compacted —'),
+          redactedThinking: t('(redacted thinking)'),
+          filesChanged: t('files changed'),
+          attachment: t('attachment'),
+          subtask: t('subtask'),
+        });
+        if (blocks.length === 0 && res.code !== 0) {
+          panel.webview.html = renderPage(
+            panel.webview,
+            target,
+            undefined,
+            t('Failed to read: {0}', res.stderr.slice(0, 400)),
+          );
+          return;
+        }
+        panel.webview.html = renderPage(panel.webview, target, blocks, undefined);
+      } catch (err) {
+        panel.webview.html = renderPage(panel.webview, target, undefined, String(err));
+      }
+    };
     panel.webview.onDidReceiveMessage(
       (msg) => {
         if (msg?.type === 'resume') {
           onResume(target);
+        } else if (msg?.type === 'refresh') {
+          void load();
         }
       },
       undefined,
@@ -60,37 +94,7 @@ export class SessionPanel {
     );
     panel.onDidDispose(() => disposables.forEach((d) => d.dispose()));
 
-    panel.webview.html = renderPage(panel.webview, target, undefined, t('Loading session…'));
-
-    try {
-      const script = buildTranscriptScript(target.session);
-      const res = target.server ? await execRemote(target.server, script) : await execLocal(script);
-      if (res.timedOut) {
-        panel.webview.html = renderPage(panel.webview, target, undefined, t('Timed out while fetching the session'));
-        return;
-      }
-      const blocks = renderTranscript(target.session, res.stdout, {
-        compactSummary: t('(compacted context summary — skipped)'),
-        truncatedNotice: t('Session file is large; showing the last 6 MiB only (earlier messages not loaded)'),
-        compactBoundary: t('— context compacted —'),
-        redactedThinking: t('(redacted thinking)'),
-        filesChanged: t('files changed'),
-        attachment: t('attachment'),
-        subtask: t('subtask'),
-      });
-      if (blocks.length === 0 && res.code !== 0) {
-        panel.webview.html = renderPage(
-          panel.webview,
-          target,
-          undefined,
-          t('Failed to read: {0}', res.stderr.slice(0, 400)),
-        );
-        return;
-      }
-      panel.webview.html = renderPage(panel.webview, target, blocks, undefined);
-    } catch (err) {
-      panel.webview.html = renderPage(panel.webview, target, undefined, String(err));
-    }
+    await load();
   }
 }
 
@@ -174,6 +178,7 @@ function renderPage(
     <h1>${escapeHtml(s.title)}</h1>
     <div class="meta">${escapeHtml(target.serverLabel)} · ${escapeHtml(s.cwd)} · ${s.timeUpdated ? new Date(s.timeUpdated).toLocaleString() : ''}</div>
   </div>
+  <button id="refresh">${escapeHtml(t('Refresh'))}</button>
   <button id="resume">${escapeHtml(t('Resume in terminal'))}</button>
 </header>
 <div id="content"></div>
@@ -185,6 +190,7 @@ function renderPage(
   const ui = payload.ui;
   const content = document.getElementById('content');
   document.getElementById('resume').addEventListener('click', () => vscode.postMessage({ type: 'resume' }));
+  document.getElementById('refresh').addEventListener('click', () => vscode.postMessage({ type: 'refresh' }));
 
   function el(tag, cls, text) {
     const d = document.createElement(tag);

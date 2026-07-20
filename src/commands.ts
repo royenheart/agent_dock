@@ -1,9 +1,20 @@
 import * as vscode from 'vscode';
 import type { ServerConfig } from './model';
-import { addServer, getConnectInNewWindow, getCurrentContext, getServers, hostMatches, removeServer } from './config';
+import {
+  addServer,
+  addServerFolders,
+  getConnectInNewWindow,
+  getCurrentContext,
+  getServers,
+  getSessionLimit,
+  removeServer,
+} from './config';
 import { resumeCommand } from './agents/resume';
-import { sshDestination, shq } from './ssh/remoteExec';
+import { buildDiscoveryScript } from './agents/discoveryScript';
+import { parseDiscoveryOutput } from './agents/parse';
+import { execRemote, sshDestination, shq } from './ssh/remoteExec';
 import { readSshConfigHosts, type SshHostEntry } from './ssh/sshConfig';
+import { pathBasename } from './paths';
 import { SessionPanel, type SessionTarget } from './views/sessionPanel';
 import type { Node, WorkspaceProvider } from './tree/workspaceProvider';
 import { CURRENT_SERVER_KEY } from './tree/workspaceProvider';
@@ -138,7 +149,11 @@ async function manualAddServerFlow(provider: WorkspaceProvider): Promise<void> {
   );
 }
 
-async function confirmAndSave(entry: SshHostEntry, provider: WorkspaceProvider): Promise<void> {
+async function confirmAndSave(
+  entry: SshHostEntry,
+  provider: WorkspaceProvider,
+  folders?: string[],
+): Promise<void> {
   const name = await vscode.window.showInputBox({
     prompt: t('Server display name (host: {0})', entry.host),
     value: entry.host,
@@ -147,36 +162,102 @@ async function confirmAndSave(entry: SshHostEntry, provider: WorkspaceProvider):
   if (!name) {
     return;
   }
-  await saveServer({ name: name.trim(), host: entry.host, user: entry.user, port: entry.port }, provider);
+  await saveServer({ name: name.trim(), host: entry.host, user: entry.user, port: entry.port, folders }, provider);
 }
 
-async function addServerFlow(provider: WorkspaceProvider): Promise<void> {
-  const ctx = getCurrentContext();
-  const currentUnsaved = !ctx.isLocal && ctx.sshHost && !getServers().some((s) => hostMatches(ctx.sshHost!, s));
-
-  // 一级：当前连接的服务器 + 底部「连接至其他服务器」
-  if (currentUnsaved && ctx.sshHost) {
-    const at = ctx.sshHost.indexOf('@');
-    const currentEntry: SshHostEntry = {
-      host: at >= 0 ? ctx.sshHost.slice(at + 1) : ctx.sshHost,
-      user: at >= 0 ? ctx.sshHost.slice(0, at) : undefined,
-    };
-    const chosen = await vscode.window.showQuickPick(
-      [
-        { label: `$(remote) ${ctx.sshHost}`, description: t('Currently connected'), entry: currentEntry },
-        { label: `$(plug) ${t('Connect to another server…')}`, alwaysShow: true, manual: true },
-      ] as HostPick[],
-      { placeHolder: t('Select a server to add') },
+async function addRemoteDirectoryFlow(entry: SshHostEntry, provider: WorkspaceProvider): Promise<void> {
+  const server: ServerConfig = { name: entry.host, host: entry.host, user: entry.user, port: entry.port };
+  const dirs = await vscode.window.withProgress(
+    { location: vscode.ProgressLocation.Notification, title: t('Scanning {0}…', entry.host) },
+    async () => {
+      try {
+        const res = await execRemote(server, buildDiscoveryScript(getSessionLimit()));
+        const { sessions } = parseDiscoveryOutput(res.stdout);
+        return [...new Set(sessions.map((s) => s.cwd).filter(Boolean))].sort();
+      } catch {
+        return undefined;
+      }
+    },
+  );
+  if (dirs === undefined) {
+    vscode.window.showErrorMessage(
+      t('Failed to scan {0} (check ssh key auth works non-interactively)', entry.host),
     );
-    if (!chosen) {
-      return;
+    return;
+  }
+  const existing = getServers().find((s) => s.host === entry.host && s.user === entry.user);
+
+  if (dirs.length === 0) {
+    if (!existing) {
+      await confirmAndSave(entry, provider);
+    } else {
+      vscode.window.showInformationMessage(t('No sessions found on {0}', entry.host));
     }
-    if (chosen.entry) {
-      await confirmAndSave(chosen.entry, provider);
-      return;
-    }
+    return;
   }
 
+  const chosen = await vscode.window.showQuickPick(
+    dirs.map((p) => ({ label: `$(folder) ${pathBasename(p)}`, description: p, dir: p })),
+    { placeHolder: t('Select a directory on {0}', entry.host) },
+  );
+  if (!chosen) {
+    return;
+  }
+  if (existing) {
+    await addServerFolders(existing.name, [chosen.dir]);
+    provider.refresh();
+    vscode.window.showInformationMessage(t('Directory {0} added to {1}', chosen.dir, existing.name));
+  } else {
+    await confirmAndSave(entry, provider, [chosen.dir]);
+  }
+}
+
+interface DirPick extends vscode.QuickPickItem {
+  dir?: string;
+  other?: boolean;
+}
+
+async function addDirectoryFlow(provider: WorkspaceProvider): Promise<void> {
+  const ctx = getCurrentContext();
+
+  const { sessions } = await provider.store.sessionsFor(CURRENT_SERVER_KEY, undefined);
+  const wsPaths = (vscode.workspace.workspaceFolders ?? []).map((f) => f.uri.fsPath);
+  const seen = new Set<string>();
+  const cwds: string[] = [];
+  for (const s of sessions) {
+    if (!s.cwd || seen.has(s.cwd)) {
+      continue;
+    }
+    seen.add(s.cwd);
+    if (wsPaths.some((w) => s.cwd === w || s.cwd.startsWith(`${w}/`))) {
+      continue;
+    }
+    cwds.push(s.cwd);
+  }
+  cwds.sort();
+
+  const picks: DirPick[] = cwds.map((p) => ({ label: `$(folder) ${pathBasename(p)}`, description: p, dir: p }));
+  picks.push({ label: `$(plug) ${t('Connect to another server…')}`, alwaysShow: true, other: true });
+
+  const chosen = await vscode.window.showQuickPick(picks, {
+    placeHolder: t('Add a directory of the current server to the workspace'),
+  });
+  if (!chosen) {
+    return;
+  }
+  if (chosen.dir) {
+    const ok = vscode.workspace.updateWorkspaceFolders(cwds.length ? (vscode.workspace.workspaceFolders?.length ?? 0) : 0, 0, {
+      uri: vscode.Uri.file(chosen.dir),
+    });
+    if (ok) {
+      provider.refresh();
+    } else {
+      vscode.window.showInformationMessage(t('Directory is already in the workspace'));
+    }
+    return;
+  }
+
+  // 二级：其他服务器（ssh config 主机列表 / 手动输入）
   const picked = await pickOtherServer(ctx.isLocal, ctx.sshHost);
   if (!picked) {
     return;
@@ -185,7 +266,7 @@ async function addServerFlow(provider: WorkspaceProvider): Promise<void> {
     await manualAddServerFlow(provider);
     return;
   }
-  await confirmAndSave(picked, provider);
+  await addRemoteDirectoryFlow(picked, provider);
 }
 
 export function registerCommands(context: vscode.ExtensionContext, provider: WorkspaceProvider): void {
@@ -195,7 +276,7 @@ export function registerCommands(context: vscode.ExtensionContext, provider: Wor
 
   reg('agentWorkspace.refresh', () => provider.refresh());
 
-  reg('agentWorkspace.addServer', () => addServerFlow(provider));
+  reg('agentWorkspace.addServer', () => addDirectoryFlow(provider));
 
   reg('agentWorkspace.removeServer', async (node: ServerNode) => {
     if (!node?.server) {

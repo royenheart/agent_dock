@@ -7,7 +7,7 @@
   "config.sessionLimit.description": "每台服务器每个 agent 最多扫描的会话数（按最近更新排序）。",
   "config.connectInNewWindow.description": "Connect 命令在新窗口中打开远程服务器（默认复用当前窗口）。",
   "cmd.refresh": "刷新",
-  "cmd.addServer": "添加服务器",
+  "cmd.addServer": "添加目录",
   "cmd.removeServer": "移除服务器",
   "cmd.connect": "连接到此服务器",
   "cmd.connectTerminal": "打开 SSH 终端",

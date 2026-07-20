@@ -65,5 +65,12 @@
   "thinking": "思考过程",
   "input": "输入",
   "output": "输出",
-  "No renderable messages in this session": "该会话没有可渲染的消息"
+  "No renderable messages in this session": "该会话没有可渲染的消息",
+  "Add a directory of the current server to the workspace": "从当前服务器选择目录加入 workspace",
+  "Scanning {0}…": "正在扫描 {0}…",
+  "Select a directory on {0}": "选择 {0} 上的目录",
+  "Directory {0} added to {1}": "已将目录 {0} 添加到 {1}",
+  "Directory is already in the workspace": "目录已在 workspace 中",
+  "Failed to scan {0} (check ssh key auth works non-interactively)": "扫描 {0} 失败（请确认 ssh 密钥免密可用）",
+  "No sessions found on {0}": "{0} 上未发现会话"
 }

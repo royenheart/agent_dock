@@ -13,6 +13,7 @@ export interface ServerConfig {
   host: string;
   user?: string;
   port?: number;
+  folders?: string[];
 }
 
 /** A discovered agent session on some server. */

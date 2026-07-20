@@ -23,6 +23,7 @@ export function getServers(): ServerConfig[] {
         host: r.host as string,
         user: typeof r.user === 'string' ? r.user : undefined,
         port: typeof r.port === 'number' ? r.port : undefined,
+        folders: Array.isArray(r.folders) ? (r.folders as unknown[]).filter((f): f is string => typeof f === 'string') : undefined,
       });
     }
   }
@@ -38,6 +39,22 @@ export async function addServer(server: ServerConfig): Promise<void> {
 
 export async function removeServer(name: string): Promise<void> {
   const servers = getServers().filter((s) => s.name !== name);
+  await vscode.workspace
+    .getConfiguration(SECTION)
+    .update('servers', servers, vscode.ConfigurationTarget.Global);
+}
+
+export async function addServerFolders(name: string, folders: string[]): Promise<void> {
+  const servers = getServers();
+  const idx = servers.findIndex((s) => s.name === name);
+  if (idx < 0) {
+    return;
+  }
+  const existing = new Set(servers[idx].folders ?? []);
+  for (const f of folders) {
+    existing.add(f);
+  }
+  servers[idx] = { ...servers[idx], folders: [...existing] };
   await vscode.workspace
     .getConfiguration(SECTION)
     .update('servers', servers, vscode.ConfigurationTarget.Global);

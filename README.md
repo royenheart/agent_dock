@@ -8,9 +8,9 @@
   - 当前服务器（本机或 Remote-SSH 已连机器）：workspace 文件夹的文件树 + `sessions` 子节点下的 agent 会话（目录 → sessions → 各会话）
   - 其他配置的远程服务器：按目录分组的会话列表（SSH 只读扫描，不传输文件树）
   - 内置资源管理器中，包含 agent 会话的目录会显示 **AI 徽标**（VS Code 不允许向内建文件树注入子节点，徽标是官方提供的唯一挂载点；会话本体在我们的树视图中）
-- **会话操作**：单击查看完整对话 transcript（webview）；右键在终端中 resume（`opencode --session` / `codex resume` / `claude --resume`）
+- **会话操作**：单击查看完整对话 transcript（结构化渲染：markdown 正文、折叠 thinking、工具卡片含输入/输出、todo 清单、文件变更；顶部有刷新按钮）；右键在终端中 resume（`opencode --session` / `codex resume` / `claude --resume`）
 - **连接切换**：右键远程服务器 → Connect，当前窗口切换连接到该服务器（基于 Remote-SSH）
-- **添加服务器**：自动读取本机 `~/.ssh/config`（含 `Include`）中的主机列表供选择，也可手动输入
+- **添加目录**：「+」按钮分级选择——先列当前服务器的目录（选中直接加入 workspace），底部「连接至其他服务器…」→ ssh config 主机列表 → SSH 扫描该服务器的会话目录后选择保存（`agentWorkspace.servers[].folders` 持久化，树下固定展示）
 - **Agent Settings**（活动栏第二个视图）：按 agent（Claude Code / Codex / opencode）分组展示当前服务器的 MCPs / Skills / Plugins / Hooks；skill 跨目录去重并标注其可见的全部 agent 与安装位置数，点击条目打开对应配置文件
 
 ## 使用

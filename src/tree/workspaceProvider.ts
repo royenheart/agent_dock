@@ -5,7 +5,7 @@ import { classifyServers, getCurrentContext, getServers, getSessionLimit } from 
 import { buildDiscoveryScript } from '../agents/discoveryScript';
 import { parseDiscoveryOutput } from '../agents/parse';
 import { execLocal, execRemote } from '../ssh/remoteExec';
-import { isUnder, pathBasename, realpathSafe } from '../paths';
+import { isUnder, normPath, pathBasename, realpathSafe } from '../paths';
 import { groupByCwd, partitionSessions } from './structure';
 import { t } from '../i18n';
 
@@ -285,13 +285,22 @@ export class WorkspaceProvider implements vscode.TreeDataProvider<Node> {
         { kind: 'info', label: error.split('\n')[0].slice(0, 80), severity: 'warning', tooltip: error },
       ];
     }
-    const folders = groupByCwd(sessions);
-    const nodes: Node[] = folders.map((g) => ({
-      kind: 'folder',
+    const configured = (node.server?.folders ?? []).map((p) => ({
+      kind: 'folder' as const,
       serverKey: node.key,
-      path: g.folderPath,
-      label: pathBasename(g.folderPath) || g.folderPath,
+      path: p,
+      label: pathBasename(p) || p,
     }));
+    const configuredPaths = new Set(configured.map((f) => normPath(f.path)));
+    const derived = groupByCwd(sessions)
+      .filter((g) => !configuredPaths.has(normPath(g.folderPath)))
+      .map((g) => ({
+        kind: 'folder' as const,
+        serverKey: node.key,
+        path: g.folderPath,
+        label: pathBasename(g.folderPath) || g.folderPath,
+      }));
+    const nodes: Node[] = [...configured, ...derived];
     if (error) {
       nodes.unshift({ kind: 'info', label: t('Partial data unavailable'), severity: 'warning', tooltip: error });
     }
