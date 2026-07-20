@@ -1,8 +1,8 @@
 {
-  "view.container.title": "Agent Workspace",
+  "view.container.title": "VSCoder",
   "view.workspace.name": "Workspace",
   "view.settings.name": "Agent Settings",
-  "config.title": "Agent Workspace",
+  "config.title": "VSCoder",
   "config.servers.description": "Remote servers. Each entry: `{ name, host, user?, port? }`. `host` may be an alias from ~/.ssh/config.",
   "config.sessionLimit.description": "Max sessions scanned per agent per server (most recently updated first).",
   "config.connectInNewWindow.description": "Open the remote server in a new window when connecting (default: reuse the current window).",

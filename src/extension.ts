@@ -8,11 +8,11 @@ import { registerCommands } from './commands';
 export function activate(context: vscode.ExtensionContext): { provider: WorkspaceProvider; decorations: SessionDecorationProvider } {
   SessionPanel.init(context.extensionUri);
   const provider = new WorkspaceProvider();
-  const tree = vscode.window.createTreeView('agentWorkspace.workspace', {
+  const tree = vscode.window.createTreeView('vscoder.workspace', {
     treeDataProvider: provider,
     showCollapseAll: true,
   });
-  const treeExplorer = vscode.window.createTreeView('agentWorkspace.workspaceExplorer', {
+  const treeExplorer = vscode.window.createTreeView('vscoder.workspaceExplorer', {
     treeDataProvider: provider,
     showCollapseAll: true,
   });
@@ -39,7 +39,7 @@ export function activate(context: vscode.ExtensionContext): { provider: Workspac
 
   context.subscriptions.push(
     vscode.workspace.onDidChangeConfiguration((e) => {
-      if (e.affectsConfiguration('agentWorkspace')) {
+      if (e.affectsConfiguration('vscoder')) {
         provider.refresh();
       }
     }),

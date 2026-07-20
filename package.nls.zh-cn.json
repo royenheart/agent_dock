@@ -1,8 +1,8 @@
 {
-  "view.container.title": "Agent Workspace",
+  "view.container.title": "VSCoder",
   "view.workspace.name": "Workspace",
   "view.settings.name": "Agent 设置",
-  "config.title": "Agent Workspace",
+  "config.title": "VSCoder",
   "config.servers.description": "远程服务器列表。每项: `{ name, host, user?, port? }`。host 可以是 ~/.ssh/config 里的别名。",
   "config.sessionLimit.description": "每台服务器每个 agent 最多扫描的会话数（按最近更新排序）。",
   "config.connectInNewWindow.description": "Connect 命令在新窗口中打开远程服务器（默认复用当前窗口）。",
