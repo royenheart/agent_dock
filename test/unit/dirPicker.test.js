@@ -50,7 +50,7 @@ test('buildBrowseItems: partial segment filters subs; accept offered after navig
     strings: STRINGS,
   });
   assert.ok(!items.some((i) => i.accept), 'partial segment must not offer accept');
-  assert.deepEqual(items.filter((i) => i.nav && i.label.startsWith('$(folder)')).map((i) => i.label), ['$(folder) src']);
+  assert.deepEqual(items.filter((i) => i.nav && i.label !== '$(folder) ..').map((i) => i.label), ['$(folder) src']);
   const navigated = buildBrowseItems({
     input: '/a/b/src/',
     homeDir: '/h',
