@@ -35,12 +35,13 @@ db = ${JSON.stringify(dbPath)}
 realws = ${JSON.stringify(REALWS)}
 outside = ${JSON.stringify(OUTSIDE)}
 con = sqlite3.connect(db)
-con.execute("CREATE TABLE session (id TEXT PRIMARY KEY, title TEXT, directory TEXT, time_created INTEGER, time_updated INTEGER, time_archived INTEGER)")
+con.execute("CREATE TABLE session (id TEXT PRIMARY KEY, title TEXT, directory TEXT, time_created INTEGER, time_updated INTEGER, time_archived INTEGER, parent_id TEXT)")
 con.execute("CREATE TABLE message (id TEXT PRIMARY KEY, session_id TEXT, time_created INTEGER, data TEXT)")
 con.execute("CREATE TABLE part (id TEXT PRIMARY KEY, message_id TEXT, session_id TEXT, time_created INTEGER, data TEXT)")
 con.execute("CREATE TABLE todo (session_id TEXT, content TEXT, status TEXT, priority TEXT, position INTEGER)")
-con.execute("INSERT INTO session VALUES ('ses_e2e_inws','E2E 工作区内会话',?,1000,2000,NULL)", (realws,))
-con.execute("INSERT INTO session VALUES ('ses_e2e_outside','E2E 外部会话',?,1000,1500,NULL)", (outside,))
+con.execute("INSERT INTO session VALUES ('ses_e2e_inws','E2E 工作区内会话',?,1000,2000,NULL,NULL)", (realws,))
+con.execute("INSERT INTO session VALUES ('ses_e2e_outside','E2E 外部会话',?,1000,1500,NULL,NULL)", (outside,))
+con.execute("INSERT INTO session VALUES ('ses_e2e_child','E2E 子代理会话',?,1000,1800,NULL,'ses_e2e_inws')", (realws,))
 con.execute("INSERT INTO message VALUES ('m1','ses_e2e_inws',1,?)", ('{"role":"user","time":{"created":1}}',))
 con.execute("INSERT INTO message VALUES ('m2','ses_e2e_inws',2,?)", ('{"role":"assistant","time":{"created":2}}',))
 con.execute("INSERT INTO part VALUES ('p1','m1','ses_e2e_inws',1,?)", ('{"type":"text","text":"e2e 用户问题"}',))

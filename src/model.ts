@@ -30,6 +30,7 @@ export interface AgentSession {
   timeUpdated: number;
   /** Absolute jsonl path for codex/claude sessions; undefined for opencode. */
   sourcePath?: string;
+  parentId?: string;
 }
 
 /** A normalized chat message used by the transcript webview. */

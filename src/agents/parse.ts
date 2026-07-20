@@ -7,6 +7,7 @@ interface RawSession {
   created: number;
   updated: number;
   path?: string;
+  parent?: string | null;
 }
 
 const SECTION_RE = /^===AGENTWS:(meta|json|opencode|codex-index|codex|claude|end)===$/;
@@ -257,6 +258,7 @@ function parseOpencodeSection(section: string): RawSession[] {
           cwd: typeof r.directory === 'string' ? r.directory : '',
           created: toMs(r.time_created),
           updated: toMs(r.time_updated),
+          parent: typeof r.parent_id === 'string' ? r.parent_id : null,
         }));
     } catch {
       return [];
@@ -303,6 +305,7 @@ export function parseDiscoveryOutput(stdout: string): DiscoveryResult {
         timeCreated: r.created,
         timeUpdated: r.updated,
         sourcePath: r.path,
+        parentId: typeof r.parent === 'string' && r.parent ? r.parent : undefined,
       });
     }
   };

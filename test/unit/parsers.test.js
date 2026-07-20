@@ -166,3 +166,47 @@ test('opencode: v2 session_message used when v1 empty', () => {
   assert.equal(blocks[0].markdown, 'v2 问题');
   assert.equal(blocks[3].output, 'data');
 });
+
+test('opencode: model/agent meta attaches on change only', () => {
+  const dump = {
+    messages: [
+      ['m1', JSON.stringify({ role: 'user', agent: 'Sisyphus', model: { providerID: 'cch', modelID: 'k3' }, time: { created: 1 } })],
+      ['m2', JSON.stringify({ role: 'assistant', agent: 'Sisyphus', model: null, time: { created: 2 } })],
+      ['m3', JSON.stringify({ role: 'assistant', agent: 'explorer', model: { providerID: 'cch', modelID: 'k3' }, time: { created: 3 } })],
+    ],
+    parts: [
+      ['m1', JSON.stringify({ type: 'text', text: '问' })],
+      ['m2', JSON.stringify({ type: 'text', text: '答1' })],
+      ['m3', JSON.stringify({ type: 'text', text: '答2' })],
+    ],
+  };
+  const stdout = ['===AGENTWS:json===', JSON.stringify(dump)].join('\n');
+  const blocks = renderOpencodeTranscript(stdout);
+  assert.equal(blocks[0].meta, 'Sisyphus · cch/k3');
+  assert.equal(blocks[1].meta, undefined, 'same agent/model key — no repeated meta');
+  assert.equal(blocks[2].meta, 'explorer · cch/k3', 'agent switch surfaces as new meta');
+});
+
+test('codex: turn_context model switch emits notice and tracks summary model', () => {
+  const lines = [
+    { timestamp: '2026-07-01T04:00:00Z', id: 'u1', cwd: '/p', model_provider: 'openai' },
+    { type: 'turn_context', payload: { turn_id: 't1', model: 'gpt-5.5', cwd: '/p' } },
+    { type: 'response_item', payload: { type: 'message', role: 'assistant', content: [{ type: 'output_text', text: '答' }] } },
+    { type: 'turn_context', payload: { turn_id: 't2', model: 'gpt-5.5', cwd: '/p' } },
+    { type: 'turn_context', payload: { turn_id: 't3', model: 'gpt-6', cwd: '/p' } },
+  ].map((r) => JSON.stringify(r)).join('\n');
+  const acc = {};
+  const blocks = renderCodexTranscript(lines, undefined, acc);
+  const notices = blocks.filter((b) => b.kind === 'notice').map((b) => b.text);
+  assert.deepEqual(notices, ['⇄ model → gpt-5.5', '⇄ model → gpt-6']);
+  assert.equal(acc.model, 'gpt-6');
+});
+
+test('claude: sidechain records carry subagent meta', () => {
+  const lines = [
+    { type: 'assistant', isSidechain: true, message: { model: 'm-x', usage: { input_tokens: 10, output_tokens: 5 }, content: [{ type: 'text', text: '子代理回答' }] } },
+  ].map((r) => JSON.stringify(r)).join('\n');
+  const blocks = renderClaudeTranscript(lines);
+  assert.ok(blocks[0].meta.includes('(subagent)'));
+  assert.ok(blocks[0].meta.includes('m-x'));
+});

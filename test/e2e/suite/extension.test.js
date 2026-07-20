@@ -50,6 +50,9 @@ suite('agent-workspace e2e', () => {
       ['claude', 'codex', 'opencode'],
       'sessions from all three agents attach to the workspace folder even though it was opened via symlink',
     );
+    const parent = sessions.find((s) => s.session.id === 'ses_e2e_inws');
+    assert.ok(parent.children && parent.children.length === 1, 'sub-agent session nested under parent');
+    assert.equal(parent.children[0].session.id, 'ses_e2e_child');
   });
 
   test('其他目录会话 contains out-of-workspace sessions', async () => {

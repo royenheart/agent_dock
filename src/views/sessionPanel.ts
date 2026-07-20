@@ -66,6 +66,7 @@ export class SessionPanel {
           filesChanged: t('files changed'),
           attachment: t('attachment'),
           subtask: t('subtask'),
+          subagent: t('(subagent)'),
         });
         if (result.blocks.length === 0 && res.code !== 0) {
           panel.webview.html = renderPage(

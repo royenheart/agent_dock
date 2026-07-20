@@ -170,13 +170,13 @@ try:
         try:
             con = sqlite3.connect("file:%s?mode=ro" % db, uri=True)
             cur = con.execute(
-                "SELECT id,title,directory,time_created,time_updated FROM session WHERE time_archived IS NULL ORDER BY time_updated DESC LIMIT ?",
+                "SELECT id,title,directory,time_created,time_updated,parent_id FROM session WHERE time_archived IS NULL ORDER BY time_updated DESC LIMIT ?",
                 (limit,),
             )
             for r in cur.fetchall():
                 out["opencode"].append({
                     "id": r[0], "title": r[1] or "", "cwd": r[2] or "",
-                    "created": r[3] or 0, "updated": r[4] or 0,
+                    "created": r[3] or 0, "updated": r[4] or 0, "parent": r[5],
                 })
             con.close()
         except Exception as e:

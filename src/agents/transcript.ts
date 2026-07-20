@@ -12,6 +12,7 @@ export interface TranscriptStrings {
   filesChanged: string;
   attachment: string;
   subtask: string;
+  subagent: string;
 }
 
 const DEFAULT_STRINGS: TranscriptStrings = {
@@ -22,6 +23,7 @@ const DEFAULT_STRINGS: TranscriptStrings = {
   filesChanged: 'files changed',
   attachment: 'attachment',
   subtask: 'subtask',
+  subagent: '(subagent)',
 };
 
 type ToolBlock = Extract<RenderBlock, { kind: 'tool' }>;
@@ -174,7 +176,13 @@ export function renderClaudeTranscript(
       }
       const t = texts.join('\n').trim();
       if (t) {
-        out.push({ kind: 'text', role: 'user', markdown: truncate(t, MAX_TEXT), ts });
+        out.push({
+          kind: 'text',
+          role: 'user',
+          markdown: truncate(t, MAX_TEXT),
+          meta: d.isSidechain === true ? strings.subagent : undefined,
+          ts,
+        });
       }
     } else if (d.type === 'assistant') {
       const content = msg?.content;
@@ -210,11 +218,14 @@ export function renderClaudeTranscript(
         }
         const b = raw as Record<string, unknown>;
         if (b.type === 'text' && typeof b.text === 'string' && b.text.trim()) {
+          const sidechain = d.isSidechain === true;
           out.push({
             kind: 'text',
             role: 'assistant',
             markdown: truncate(b.text, MAX_TEXT),
-            meta: firstText ? usageMeta : undefined,
+            meta: [firstText ? usageMeta : undefined, sidechain ? strings.subagent : undefined]
+              .filter(Boolean)
+              .join(' · ') || undefined,
             ts,
           });
           firstText = false;
@@ -272,10 +283,19 @@ export function renderCodexTranscript(
   void strings;
   const out: RenderBlock[] = [];
   const pendingTools = new Map<string, ToolBlock>();
+  let lastModel: string | undefined;
   for (const d of jsonLines(jsonl)) {
     const p = d.payload as Record<string, unknown> | undefined;
     const ts = tsOf(d.timestamp) ?? tsOf(p?.timestamp);
-    if (acc && d.type === 'session_meta') {
+    if (d.type === 'turn_context' && p && typeof p.model === 'string') {
+      if (p.model !== lastModel) {
+        out.push({ kind: 'notice', text: `⇄ model → ${p.model}`, ts });
+        lastModel = p.model;
+        if (acc) {
+          acc.model = p.model;
+        }
+      }
+    } else if (acc && d.type === 'session_meta') {
       const meta = p ?? d;
       if (typeof meta.model_provider === 'string') {
         acc.model = meta.model_provider;
@@ -505,6 +525,8 @@ export function renderOpencodeTranscript(
     }
   }
 
+  let prevAgent: string | undefined;
+  let prevModel: string | undefined;
   for (const [id, dataStr] of dump.messages ?? []) {
     let data: Record<string, unknown>;
     try {
@@ -515,9 +537,37 @@ export function renderOpencodeTranscript(
     const role = data.role === 'user' ? 'user' : 'assistant';
     const time = data.time as Record<string, unknown> | undefined;
     const ts = typeof time?.created === 'number' ? time.created : undefined;
+    const agentName = typeof data.agent === 'string' && data.agent ? data.agent : undefined;
+    const modelRef = data.model as Record<string, unknown> | undefined;
+    const modelStr =
+      modelRef && typeof modelRef.modelID === 'string'
+        ? modelRef.providerID
+          ? `${String(modelRef.providerID)}/${modelRef.modelID}`
+          : modelRef.modelID
+        : undefined;
+    const changedAgent = agentName !== undefined && agentName !== prevAgent;
+    const changedModel = modelStr !== undefined && modelStr !== prevModel;
+    if (agentName) {
+      prevAgent = agentName;
+    }
+    if (modelStr) {
+      prevModel = modelStr;
+    }
+    const messageMeta =
+      changedAgent || changedModel
+        ? [agentName ?? prevAgent, modelStr ?? prevModel].filter(Boolean).join(' · ')
+        : undefined;
+    let firstText = true;
     for (const part of partsByMessage.get(id) ?? []) {
       if (part.type === 'text' && typeof part.text === 'string' && part.text.trim()) {
-        out.push({ kind: 'text', role, markdown: truncate(part.text, MAX_TEXT), ts });
+        out.push({
+          kind: 'text',
+          role,
+          markdown: truncate(part.text, MAX_TEXT),
+          meta: firstText ? messageMeta : undefined,
+          ts,
+        });
+        firstText = false;
       } else if (part.type === 'reasoning' && typeof part.text === 'string' && part.text.trim()) {
         out.push({ kind: 'thinking', text: truncate(part.text, MAX_TEXT), ts });
       } else if (part.type === 'tool') {
@@ -572,6 +622,10 @@ export function renderOpencodeTranscript(
         out.push({ kind: 'notice', text: strings.compactBoundary, ts });
       } else if (type === 'shell') {
         out.push({ kind: 'tool', name: 'shell', input: brief(data.command ?? data, TOOL_INPUT_PREVIEW), ts });
+      } else if (type === 'model-switched' || type === 'agent-switched') {
+        const model = data.model as Record<string, unknown> | undefined;
+        const detail = String(model?.id ?? data.agent ?? '');
+        out.push({ kind: 'notice', text: `⇄ ${type === 'model-switched' ? 'model' : 'agent'} → ${detail}`, ts });
       } else {
         out.push({ kind: 'notice', text: type, ts });
       }

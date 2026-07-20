@@ -16,7 +16,7 @@ export type Node =
   | { kind: 'folder'; serverKey: string; path: string; label: string; workspaceUri?: vscode.Uri }
   | { kind: 'otherSessions'; serverKey: string }
   | { kind: 'sessionsRoot'; serverKey: string; folderPath: string }
-  | { kind: 'session'; serverKey: string; session: AgentSession }
+  | { kind: 'session'; serverKey: string; session: AgentSession; children?: Node[] }
   | { kind: 'fsEntry'; uri: vscode.Uri; name: string; isDir: boolean }
   | { kind: 'info'; label: string; severity: 'info' | 'warning' | 'error' | 'loading'; tooltip?: string };
 
@@ -171,10 +171,13 @@ export class WorkspaceProvider implements vscode.TreeDataProvider<Node> {
       }
       case 'session': {
         const s = node.session;
-        const item = new vscode.TreeItem(s.title, vscode.TreeItemCollapsibleState.None);
+        const item = new vscode.TreeItem(
+          s.title,
+          node.children?.length ? vscode.TreeItemCollapsibleState.Collapsed : vscode.TreeItemCollapsibleState.None,
+        );
         item.iconPath = new vscode.ThemeIcon(AGENT_ICON[s.agent]);
         item.contextValue = 'session';
-        item.description = `${AGENT_LABEL[s.agent]} · ${formatRelative(s.timeUpdated)}`;
+        item.description = `${AGENT_LABEL[s.agent]} · ${formatRelative(s.timeUpdated)}${node.children?.length ? ` · ${t('{0} sub-sessions', node.children.length)}` : ''}`;
         item.tooltip = new vscode.MarkdownString(
           `**${s.title}**\n\n- agent: ${AGENT_LABEL[s.agent]}\n- id: \`${s.id}\`\n- cwd: \`${s.cwd}\`\n- ${t('updated')}: ${s.timeUpdated ? new Date(s.timeUpdated).toLocaleString() : '-'}`,
         );
@@ -233,6 +236,8 @@ export class WorkspaceProvider implements vscode.TreeDataProvider<Node> {
         return this.sessionsUnder(node.serverKey, node.folderPath);
       case 'otherSessions':
         return this.otherSessionsChildren(node);
+      case 'session':
+        return node.children ?? [];
       case 'fsEntry':
         return node.isDir ? this.dirChildren(node.uri) : [];
       default:
@@ -368,10 +373,22 @@ export class WorkspaceProvider implements vscode.TreeDataProvider<Node> {
   private async sessionsUnder(serverKey: string, folderPath: string): Promise<Node[]> {
     const server = serverKey === CURRENT_SERVER_KEY ? undefined : this.serverConfigFor(serverKey);
     const { sessions } = await this.store.sessionsFor(serverKey, server);
-    return sessions
+    const list = sessions
       .filter((s) => s.cwd && isUnder(s.cwd, folderPath))
-      .sort((a, b) => b.timeUpdated - a.timeUpdated)
-      .map((s) => ({ kind: 'session', serverKey, session: s }));
+      .sort((a, b) => b.timeUpdated - a.timeUpdated);
+    const ids = new Set(list.map((s) => s.id));
+    const childrenOf = new Map<string, Node[]>();
+    const top: AgentSession[] = [];
+    for (const s of list) {
+      if (s.parentId && ids.has(s.parentId)) {
+        const arr = childrenOf.get(s.parentId) ?? [];
+        arr.push({ kind: 'session', serverKey, session: s });
+        childrenOf.set(s.parentId, arr);
+      } else {
+        top.push(s);
+      }
+    }
+    return top.map((s) => ({ kind: 'session', serverKey, session: s, children: childrenOf.get(s.id) }));
   }
 
   private async dirChildren(uri: vscode.Uri): Promise<Node[]> {

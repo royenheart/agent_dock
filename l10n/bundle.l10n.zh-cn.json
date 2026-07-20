@@ -86,5 +86,7 @@
   "New folder name": "新文件夹名",
   "Rename to": "重命名为",
   "Delete {0}? This cannot be undone.": "删除 {0}？此操作不可撤销。",
-  "Delete": "删除"
+  "Delete": "删除",
+  "{0} sub-sessions": "{0} 个子会话",
+  "(subagent)": "（子代理）"
 }

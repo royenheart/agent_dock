@@ -403,15 +403,13 @@ export function registerCommands(context: vscode.ExtensionContext, provider: Wor
 
   reg('agentWorkspace.fsCopyPath', async (node: FsEntryNode) => {
     if (node?.uri) {
-      await vscode.env.clipboard.writeText(node.uri.fsPath);
-      vscode.window.showInformationMessage(t('Path copied'));
+      await vscode.commands.executeCommand('copyFilePath', node.uri);
     }
   });
 
   reg('agentWorkspace.fsCopyRelativePath', async (node: FsEntryNode) => {
     if (node?.uri) {
-      await vscode.env.clipboard.writeText(vscode.workspace.asRelativePath(node.uri, false));
-      vscode.window.showInformationMessage(t('Relative path copied'));
+      await vscode.commands.executeCommand('copyRelativeFilePath', node.uri);
     }
   });
 
