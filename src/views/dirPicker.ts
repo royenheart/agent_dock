@@ -1,6 +1,6 @@
 import * as vscode from 'vscode';
 import { t } from '../i18n';
-import { expandTilde, parentDir, splitPathInput } from './pathInput';
+import { buildBrowseItems, expandTilde, splitPathInput } from './pathInput';
 
 export interface DirPickOptions {
   title: string;
@@ -59,34 +59,23 @@ export function pickDirectory(opts: DirPickOptions): Promise<DirPickResult> {
     const refreshBrowse = async (): Promise<void> => {
       const gen = ++generation;
       const expanded = expandTilde(qp.value, opts.homeDir);
-      const { base, segment } = splitPathInput(expanded);
+      const { base } = splitPathInput(expanded);
       qp.busy = true;
       const subs = await opts.listSubdirs(base);
       qp.busy = false;
       if (gen !== generation) {
         return;
       }
-      if (subs === undefined) {
-        qp.items = [{ label: `$(error) ${t('Directory does not exist: {0}', base)}`, noOp: true }];
-        return;
-      }
-      const items: Item[] = [];
-      const exact = expanded.endsWith('/') ? base : subs.includes(segment) ? `${base}${segment}/` : undefined;
-      if (exact) {
-        items.push({ label: `$(check) ${t('Open {0}', exact)}`, accept: exact });
-      } else if (segment === '') {
-        items.push({ label: `$(check) ${t('Open {0}', base)}`, accept: base });
-      }
-      if (base !== '/') {
-        items.push({ label: '$(folder) ..', nav: parentDir(base) });
-      }
-      for (const name of subs.filter((s) => s.startsWith(segment)).sort()) {
-        items.push({ label: `$(folder) ${name}`, nav: `${base}${name}/` });
-      }
-      if (opts.extraAction) {
-        items.push({ label: opts.extraAction.label, alwaysShow: true, action: true });
-      }
-      qp.items = items;
+      qp.items = buildBrowseItems({
+        input: qp.value,
+        homeDir: opts.homeDir,
+        subs,
+        strings: {
+          open: (p) => t('Open {0}', p),
+          notExist: (p) => t('Directory does not exist: {0}', p),
+        },
+        extraActionLabel: opts.extraAction?.label,
+      });
     };
 
     qp.items = sessionItems();
