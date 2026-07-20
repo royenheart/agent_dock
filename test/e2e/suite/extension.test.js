@@ -80,14 +80,27 @@ suite('agent-workspace e2e', () => {
     const res = await execLocal(buildTranscriptScript(session), 30_000);
     assert.equal(res.code, 0, res.stderr);
     const { blocks, summary } = renderTranscript(session, res.stdout);
-    assert.deepEqual(blocks.map((b) => b.kind), ['text', 'text', 'tool', 'todo']);
+    assert.deepEqual(blocks.map((b) => b.kind), ['text', 'text', 'tool', 'tool', 'todo']);
     assert.equal(blocks[0].markdown, 'e2e 用户问题');
     assert.equal(blocks[1].markdown, 'e2e 助手回答');
     assert.equal(blocks[2].name, 'bash');
     assert.equal(blocks[2].output, 'ok-out');
     assert.equal(blocks[2].status, 'completed');
-    assert.deepEqual(blocks[3].items, [{ content: 'e2e 待办事项', status: 'in_progress' }]);
+    assert.equal(blocks[3].name, '⚡ skill: frontend');
+    assert.equal(blocks[3].estTokens, 100);
+    assert.deepEqual(blocks[4].items, [{ content: 'e2e 待办事项', status: 'in_progress' }]);
     assert.ok(summary && typeof summary === 'object');
+    assert.deepEqual(summary.skills, [{ name: 'frontend', calls: 1, estTokens: 100 }]);
+  });
+
+  test('create session command opens a terminal for the picked agent', async () => {
+    const children = await currentServerChildren();
+    const wsFolder = children.find((n) => n.kind === 'folder' && n.workspaceUri);
+    await vscode.commands.executeCommand('agentWorkspace.createSession', wsFolder, 'codex');
+    await new Promise((r) => setTimeout(r, 800));
+    const term = vscode.window.terminals.find((t2) => t2.name.includes('codex'));
+    assert.ok(term, `terminal for codex created, have: ${vscode.window.terminals.map((t2) => t2.name).join(',')}`);
+    term.dispose();
   });
 
   test('file node commands: copy path, new file, rename', async () => {

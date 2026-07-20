@@ -93,5 +93,8 @@
   "Could not remove {0} programmatically — use \"Remove Folder from Workspace\" in the Explorer instead": "无法以编程方式移除 {0}——请在资源管理器中使用「从工作区移除文件夹」",
   "cache read {0}": "缓存读 {0}",
   "cache write {0}": "缓存写 {0}",
-  "cache read: tokens served from prompt cache · cache write: tokens newly cached · skills: estimated from injected content (chars/4)": "缓存读：命中提示词缓存复用的 token · 缓存写：新写入缓存的 token · skills：按注入内容估算（字符数/4）"
+  "cache read: tokens served from prompt cache · cache write: tokens newly cached · skills: estimated from injected content (chars/4)": "缓存读：命中提示词缓存复用的 token · 缓存写：新写入缓存的 token · skills：按注入内容估算（字符数/4）",
+  "Select an agent backend": "选择 Agent 后端",
+  "Session monitor": "会话监控",
+  "calls": "次"
 }

@@ -25,5 +25,6 @@
   "cmd.fsRename": "重命名…",
   "cmd.fsDelete": "删除",
   "cmd.fsOpenTerminal": "在集成终端中打开",
-  "cmd.fsRemoveFromWorkspace": "从工作区移除文件夹"
+  "cmd.fsRemoveFromWorkspace": "从工作区移除文件夹",
+  "cmd.createSession": "新建会话…"
 }

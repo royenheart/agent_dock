@@ -137,6 +137,13 @@ function renderPage(
   const payload = JSON.stringify({
     blocks: blocks ?? null,
     notice: notice ?? null,
+    monitor: summary?.skills?.length
+      ? {
+          skills: summary.skills,
+          calls: summary.skillCalls ?? 0,
+          tokens: summary.skillTokens ?? 0,
+        }
+      : null,
     ui: {
       you: t('You'),
       agent: 'Agent',
@@ -144,6 +151,8 @@ function renderPage(
       input: t('input'),
       output: t('output'),
       empty: t('No renderable messages in this session'),
+      monitor: t('Session monitor'),
+      skillsUnit: t('calls'),
     },
   }).replace(/</g, '\\u003c');
   return `<!DOCTYPE html>
@@ -164,6 +173,14 @@ function renderPage(
   .meta-line { color: var(--vscode-descriptionForeground); font-size: 10px; margin-bottom: 4px; font-family: var(--vscode-editor-font-family); }
   .usage { margin: 6px auto; max-width: 900px; text-align: center; color: var(--vscode-descriptionForeground);
            font-size: 11px; font-family: var(--vscode-editor-font-family); opacity: 0.85; }
+  .monitor { margin: 12px 0; max-width: 900px; border: 1px solid var(--vscode-panel-border); border-radius: 8px; padding: 6px 12px; }
+  .monitor summary { cursor: pointer; font-size: 12px; color: var(--vscode-textLink-foreground); }
+  .mrow { display: flex; gap: 10px; align-items: center; margin: 5px 0; font-size: 12px; }
+  .mname { min-width: 150px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .mbar { flex: 1; height: 10px; border-radius: 5px; background: var(--vscode-editor-inactiveSelectionBackground); overflow: hidden; }
+  .mbar-fill { display: block; height: 100%; background: var(--vscode-charts-blue); }
+  .mval { min-width: 110px; text-align: right; color: var(--vscode-descriptionForeground);
+          font-family: var(--vscode-editor-font-family); font-size: 11px; }
   button { background: var(--vscode-button-background); color: var(--vscode-button-foreground);
            border: none; padding: 5px 12px; border-radius: 4px; cursor: pointer; white-space: nowrap; }
   button:hover { background: var(--vscode-button-hoverBackground); }
@@ -250,6 +267,26 @@ function renderPage(
   function renderUsage(b) {
     return el('div', 'usage', b.label);
   }
+  function renderMonitor(m) {
+    const det = el('details', 'monitor');
+    det.append(el('summary', '', '📊 ' + ui.monitor + ' · skills ' + m.calls + ' ≈' + fmtT(m.tokens)));
+    const body = el('div');
+    const max = Math.max(...m.skills.map(s => s.estTokens));
+    const sorted = m.skills.slice().sort((a, b) => b.estTokens - a.estTokens);
+    for (const s of sorted) {
+      const row = el('div', 'mrow');
+      row.append(el('span', 'mname', s.name));
+      const wrap = el('span', 'mbar');
+      const fill = el('span', 'mbar-fill');
+      fill.style.width = Math.max(3, Math.round((s.estTokens / max) * 100)) + '%';
+      wrap.append(fill);
+      row.append(wrap);
+      row.append(el('span', 'mval', s.calls + ' ' + ui.skillsUnit + ' · ≈' + fmtT(s.estTokens)));
+      body.append(row);
+    }
+    det.append(body);
+    return det;
+  }
   function renderThinking(b) {
     const d = el('details', 'thinking');
     d.append(el('summary', '', '💭 ' + ui.thinking));
@@ -308,6 +345,7 @@ function renderPage(
   } else if (!payload.blocks || !payload.blocks.length) {
     content.append(el('div', 'big-notice', ui.empty));
   } else {
+    if (payload.monitor) content.append(renderMonitor(payload.monitor));
     for (const b of payload.blocks) {
       if (b.kind === 'text') content.append(renderText(b));
       else if (b.kind === 'thinking') content.append(renderThinking(b));

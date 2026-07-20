@@ -25,5 +25,6 @@
   "cmd.fsRename": "Rename…",
   "cmd.fsDelete": "Delete",
   "cmd.fsOpenTerminal": "Open in Integrated Terminal",
-  "cmd.fsRemoveFromWorkspace": "Remove Folder from Workspace"
+  "cmd.fsRemoveFromWorkspace": "Remove Folder from Workspace",
+  "cmd.createSession": "New Session…"
 }

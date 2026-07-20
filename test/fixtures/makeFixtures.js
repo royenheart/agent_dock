@@ -30,7 +30,7 @@ function makeFixtures() {
   fs.mkdirSync(ocDir, { recursive: true });
   const dbPath = path.join(ocDir, 'opencode.db');
   const py = `
-import sqlite3
+import sqlite3, json
 db = ${JSON.stringify(dbPath)}
 realws = ${JSON.stringify(REALWS)}
 outside = ${JSON.stringify(OUTSIDE)}
@@ -47,6 +47,7 @@ con.execute("INSERT INTO message VALUES ('m2','ses_e2e_inws',2,?)", ('{"role":"a
 con.execute("INSERT INTO part VALUES ('p1','m1','ses_e2e_inws',1,?)", ('{"type":"text","text":"e2e 用户问题"}',))
 con.execute("INSERT INTO part VALUES ('p2','m2','ses_e2e_inws',2,?)", ('{"type":"text","text":"e2e 助手回答"}',))
 con.execute("INSERT INTO part VALUES ('p3','m2','ses_e2e_inws',3,?)", ('{"type":"tool","tool":"bash","state":{"status":"completed","input":{"command":"ls"},"output":"ok-out"}}',))
+con.execute("INSERT INTO part VALUES ('p4','m2','ses_e2e_inws',4,?)", (json.dumps({"type":"tool","tool":"skill","state":{"status":"completed","input":{"name":"frontend"},"output":"s"*400}}),))
 con.execute("INSERT INTO todo VALUES ('ses_e2e_inws','e2e 待办事项','in_progress','high',0)")
 con.commit()
 con.close()

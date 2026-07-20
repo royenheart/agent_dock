@@ -219,6 +219,12 @@
         "title": "%cmd.fsRemoveFromWorkspace%",
         "category": "Agent Workspace",
         "icon": "$(close)"
+      },
+      {
+        "command": "agentWorkspace.createSession",
+        "title": "%cmd.createSession%",
+        "category": "Agent Workspace",
+        "icon": "$(add)"
       }
     ],
     "menus": {
@@ -319,6 +325,11 @@
           "command": "agentWorkspace.fsRemoveFromWorkspace",
           "when": "view =~ /^agentWorkspace.workspace/ && viewItem == folder.workspace",
           "group": "3_modify@3"
+        },
+        {
+          "command": "agentWorkspace.createSession",
+          "when": "view =~ /^agentWorkspace.workspace/ && (viewItem == folder.workspace || viewItem == folder.remote)",
+          "group": "1_session@0"
         }
       ]
     }

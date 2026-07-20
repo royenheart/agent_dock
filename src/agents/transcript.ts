@@ -28,6 +28,12 @@ const DEFAULT_STRINGS: TranscriptStrings = {
 
 type ToolBlock = Extract<RenderBlock, { kind: 'tool' }>;
 
+export interface SkillUsage {
+  name: string;
+  calls: number;
+  estTokens: number;
+}
+
 export interface TranscriptSummary {
   model?: string;
   input?: number;
@@ -37,6 +43,7 @@ export interface TranscriptSummary {
   cost?: number;
   skillCalls?: number;
   skillTokens?: number;
+  skills?: SkillUsage[];
 }
 
 function estimateTokensFromChars(text: string): number {
@@ -56,11 +63,19 @@ function skillNameOf(input: unknown): string | undefined {
   return undefined;
 }
 
-function markSkillCall(acc: TranscriptSummary | undefined, output: string): number {
+function recordSkillCall(acc: TranscriptSummary | undefined, name: string, output: string): number {
   const est = estimateTokensFromChars(output);
   if (acc) {
     acc.skillCalls = (acc.skillCalls ?? 0) + 1;
     acc.skillTokens = (acc.skillTokens ?? 0) + est;
+    const list = acc.skills ?? (acc.skills = []);
+    const found = list.find((s) => s.name === name);
+    if (found) {
+      found.calls += 1;
+      found.estTokens += est;
+    } else {
+      list.push({ name, calls: 1, estTokens: est });
+    }
   }
   return est;
 }
@@ -172,7 +187,7 @@ export function renderClaudeTranscript(
 ): RenderBlock[] {
   const out: RenderBlock[] = [];
   const pendingTools = new Map<string, ToolBlock>();
-  const skillPending = new Set<ToolBlock>();
+  const skillPending = new Map<ToolBlock, string>();
   for (const d of jsonLines(jsonl)) {
     const ts = tsOf(d.timestamp);
     const msg = d.message as Record<string, unknown> | undefined;
@@ -197,8 +212,9 @@ export function renderClaudeTranscript(
           if (pending) {
             pending.output = output;
             pending.isError = b.is_error === true;
-            if (skillPending.has(pending)) {
-              pending.estTokens = markSkillCall(acc, output);
+            const skillName = skillPending.get(pending);
+            if (skillName !== undefined) {
+              pending.estTokens = recordSkillCall(acc, skillName, output);
               skillPending.delete(pending);
             }
             pendingTools.delete(String(b.tool_use_id));
@@ -280,7 +296,7 @@ export function renderClaudeTranscript(
           };
           out.push(block);
           if (skillName) {
-            skillPending.add(block);
+            skillPending.set(block, skillName);
           }
           if (typeof b.id === 'string') {
             pendingTools.set(b.id, block);
@@ -320,7 +336,7 @@ export function renderCodexTranscript(
   void strings;
   const out: RenderBlock[] = [];
   const pendingTools = new Map<string, ToolBlock>();
-  const skillPending = new Set<ToolBlock>();
+  const skillPending = new Map<ToolBlock, string>();
   let lastModel: string | undefined;
   for (const d of jsonLines(jsonl)) {
     const p = d.payload as Record<string, unknown> | undefined;
@@ -378,7 +394,7 @@ export function renderCodexTranscript(
         };
         out.push(block);
         if (skillName) {
-          skillPending.add(block);
+          skillPending.set(block, skillName);
         }
         if (typeof p.call_id === 'string') {
           pendingTools.set(p.call_id, block);
@@ -388,8 +404,9 @@ export function renderCodexTranscript(
         const pending = typeof p.call_id === 'string' ? pendingTools.get(p.call_id) : undefined;
         if (pending) {
           pending.output = output;
-          if (skillPending.has(pending)) {
-            pending.estTokens = markSkillCall(acc, output);
+          const skillName = skillPending.get(pending);
+          if (skillName !== undefined) {
+            pending.estTokens = recordSkillCall(acc, skillName, output);
             skillPending.delete(pending);
           }
           pendingTools.delete(String(p.call_id));
@@ -512,10 +529,10 @@ function renderOpencodeToolPart(part: Record<string, unknown>, ts: number | unde
     ts,
   };
   if (part.tool === 'skill') {
-    const skillName = skillNameOf(state.input ?? part.input);
-    block.name = `⚡ skill: ${skillName ?? 'skill'}`;
+    const skillName = skillNameOf(state.input ?? part.input) ?? 'skill';
+    block.name = `⚡ skill: ${skillName}`;
     if (block.output) {
-      block.estTokens = markSkillCall(acc, block.output);
+      block.estTokens = recordSkillCall(acc, skillName, block.output);
     }
   }
   return block;

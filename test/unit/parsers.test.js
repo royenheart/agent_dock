@@ -248,3 +248,22 @@ test('skills: codex skill function_call parses json args', () => {
   assert.equal(blocks[0].estTokens, 50);
   assert.equal(acc.skillTokens, 50);
 });
+
+test('skills: usage aggregated per skill name in summary.skills', () => {
+  const lines = [
+    { type: 'assistant', message: { content: [{ type: 'tool_use', id: 's1', name: 'Skill', input: { skill: 'debugging' } }] } },
+    { type: 'user', message: { content: [{ type: 'tool_result', tool_use_id: 's1', content: 'x'.repeat(400) }] } },
+    { type: 'assistant', message: { content: [{ type: 'tool_use', id: 's2', name: 'Skill', input: { skill: 'debugging' } }] } },
+    { type: 'user', message: { content: [{ type: 'tool_result', tool_use_id: 's2', content: 'x'.repeat(800) }] } },
+    { type: 'assistant', message: { content: [{ type: 'tool_use', id: 's3', name: 'Skill', input: { skill: 'frontend' } }] } },
+    { type: 'user', message: { content: [{ type: 'tool_result', tool_use_id: 's3', content: 'x'.repeat(120) }] } },
+  ].map((r) => JSON.stringify(r)).join('\n');
+  const acc = {};
+  renderClaudeTranscript(lines, undefined, acc);
+  assert.equal(acc.skillCalls, 3);
+  assert.equal(acc.skillTokens, 330);
+  const dbg = acc.skills.find((s) => s.name === 'debugging');
+  assert.deepEqual(dbg, { name: 'debugging', calls: 2, estTokens: 300 });
+  const fe = acc.skills.find((s) => s.name === 'frontend');
+  assert.deepEqual(fe, { name: 'frontend', calls: 1, estTokens: 30 });
+});

@@ -16,6 +16,7 @@ import { buildDiscoveryScript } from './agents/discoveryScript';
 import { parseDiscoveryOutput } from './agents/parse';
 import { execRemote, sshDestination, shq } from './ssh/remoteExec';
 import { readSshConfigHosts, type SshHostEntry } from './ssh/sshConfig';
+import { pathBasename } from './paths';
 import { pickDirectory } from './views/dirPicker';
 import { SessionPanel, type SessionTarget } from './views/sessionPanel';
 import type { Node, WorkspaceProvider } from './tree/workspaceProvider';
@@ -40,6 +41,12 @@ function targetDirUri(node: FsEntryNode | FolderNode): vscode.Uri | undefined {
   }
   return undefined;
 }
+
+const AGENT_CLI: Record<'opencode' | 'codex' | 'claude', { cmd: string; hint: string }> = {
+  opencode: { cmd: 'opencode', hint: 'opencode --session 新会话' },
+  codex: { cmd: 'codex', hint: 'codex 新会话' },
+  claude: { cmd: 'claude', hint: 'claude 新会话' },
+};
 
 function sessionTarget(node: SessionNode): SessionTarget | undefined {
   const servers = getServers();
@@ -497,8 +504,41 @@ export function registerCommands(context: vscode.ExtensionContext, provider: Wor
     }
   });
 
-  reg('agentWorkspace.fsRemoveFromWorkspace', (node: FolderNode): boolean => {
-    if (node?.kind !== 'folder' || !node.workspaceUri) {
+  reg('agentWorkspace.createSession', async (node: FolderNode, agent?: 'opencode' | 'codex' | 'claude') => {
+    if (node?.kind !== 'folder') {
+      return;
+    }
+    const picked =
+      agent ??
+      (
+        await vscode.window.showQuickPick(
+          (['opencode', 'codex', 'claude'] as const).map((a) => ({ label: a, description: AGENT_CLI[a].hint })),
+          { placeHolder: t('Select an agent backend') },
+        )
+      )?.label;
+    if (!picked) {
+      return;
+    }
+    const cli = AGENT_CLI[picked as 'opencode' | 'codex' | 'claude'].cmd;
+    const isRemote = node.serverKey !== CURRENT_SERVER_KEY;
+    if (isRemote) {
+      const server = getServers().find((s) => s.name === node.serverKey);
+      if (!server) {
+        return;
+      }
+      const port = server.port ? `-p ${server.port} ` : '';
+      const term = vscode.window.createTerminal({ name: `new: ${picked} · ${pathBasename(node.path)}` });
+      term.sendText(`ssh -t ${port}${sshDestination(server)} ${shq(`cd ${shq(node.path)} && ${cli}`)}`);
+      term.show();
+    } else {
+      const cwd = node.workspaceUri?.fsPath ?? node.path;
+      const term = vscode.window.createTerminal({ name: `new: ${picked} · ${node.label}`, cwd });
+      term.sendText(cli);
+      term.show();
+    }
+  });
+
+  reg('agentWorkspace.fsRemoveFromWorkspace', (node: FolderNode): boolean => {    if (node?.kind !== 'folder' || !node.workspaceUri) {
       return false;
     }
     const folders = vscode.workspace.workspaceFolders ?? [];
