@@ -26,5 +26,8 @@
   "cmd.fsDelete": "删除",
   "cmd.fsOpenTerminal": "在集成终端中打开",
   "cmd.fsRemoveFromWorkspace": "从工作区移除文件夹",
-  "cmd.createSession": "新建会话…"
+  "cmd.createSession": "新建会话…",
+  "config.sshTimeoutSeconds.description": "单次 SSH 远程操作（扫描/目录读取/文件预览）的超时时间（秒）。",
+  "config.logLevel.description": "「Agent Dock」输出通道的日志级别。",
+  "cmd.showLog": "查看日志"
 }

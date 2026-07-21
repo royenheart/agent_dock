@@ -19,6 +19,14 @@ suite('agent-workspace e2e', () => {
     const roots = await api.provider.getChildren(undefined);
     const cur = roots.find((n) => n.kind === 'server' && n.isCurrent);
     assert.ok(cur, 'current server node exists');
+    for (let i = 0; i < 120; i++) {
+      const children = await api.provider.getChildren(cur);
+      const loading = children.length === 1 && children[0].kind === 'info' && children[0].severity === 'loading';
+      if (!loading) {
+        return children;
+      }
+      await new Promise((r) => setTimeout(r, 250));
+    }
     return api.provider.getChildren(cur);
   }
 

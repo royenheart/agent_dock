@@ -75,6 +75,11 @@ export function getSessionLimit(): number {
   return vscode.workspace.getConfiguration(SECTION).get<number>('sessionLimit', 100);
 }
 
+export function getSshTimeoutMs(): number {
+  const seconds = vscode.workspace.getConfiguration(SECTION).get<number>('sshTimeoutSeconds', 20);
+  return Math.min(Math.max(seconds, 5), 120) * 1000;
+}
+
 export function getConnectInNewWindow(): boolean {
   return vscode.workspace
     .getConfiguration(SECTION)

@@ -5,8 +5,11 @@ import { RemoteFsProvider, REMOTE_SCHEME } from './ssh/remoteFsProvider';
 import { SettingsViewProvider } from './views/settingsView';
 import { SessionPanel } from './views/sessionPanel';
 import { registerCommands } from './commands';
+import { log } from './log';
 
 export function activate(context: vscode.ExtensionContext): { provider: WorkspaceProvider; decorations: SessionDecorationProvider } {
+  log.init();
+  log.info('Agent Dock activated');
   SessionPanel.init(context.extensionUri);
   const provider = new WorkspaceProvider();
   const tree = vscode.window.createTreeView('agentDock.workspace', {
@@ -18,7 +21,6 @@ export function activate(context: vscode.ExtensionContext): { provider: Workspac
     showCollapseAll: true,
   });
   const decorations = new SessionDecorationProvider(provider.store);
-  provider.store.onDidSettle = () => decorations.refresh();
   provider.onDidChangeTreeData(() => decorations.refresh());
   const settings = new SettingsViewProvider(context.extensionUri);
   const syncSelection = (e: vscode.TreeViewSelectionChangeEvent<Node>): void => {

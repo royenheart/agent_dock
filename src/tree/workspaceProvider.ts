@@ -1,15 +1,17 @@
 import * as vscode from 'vscode';
 import type { AgentKind, AgentSession, ServerConfig } from '../model';
 import { AGENT_LABEL } from '../model';
-import { classifyServers, getCurrentContext, getCurrentDisplayName, getServers, getSessionLimit } from '../config';
+import { classifyServers, getCurrentContext, getCurrentDisplayName, getServers, getSessionLimit, getSshTimeoutMs } from '../config';
 import { buildDiscoveryScript } from '../agents/discoveryScript';
 import { parseDiscoveryOutput } from '../agents/parse';
-import { execLocal, execRemote, shq } from '../ssh/remoteExec';
+import { execLocal, shq } from '../ssh/remoteExec';
+import { execRemoteSmart } from '../ssh/progress';
 import { joinRemotePath, remoteUri } from '../ssh/remoteFsProvider';
 import { parseLsAp } from '../ssh/remoteFsParse';
 import { isUnder, normPath, pathBasename, realpathSafe } from '../paths';
 import { groupByCwd, partitionSessions } from './structure';
 import { t } from '../i18n';
+import { log } from '../log';
 
 export const CURRENT_SERVER_KEY = '__current__';
 
@@ -61,6 +63,14 @@ export class SessionStore {
 
   onDidSettle?: (key: string) => void;
 
+  has(key: string): boolean {
+    return this.cache.has(key);
+  }
+
+  isLoading(key: string): boolean {
+    return this.inflight.has(key);
+  }
+
   async sessionsFor(key: string, server: ServerConfig | undefined): Promise<{ sessions: AgentSession[]; error?: string }> {
     if (this.cache.has(key)) {
       return { sessions: this.cache.get(key)!, error: this.errors.get(key) };
@@ -73,11 +83,22 @@ export class SessionStore {
   }
 
   private async fetch(key: string, server: ServerConfig | undefined): Promise<void> {
+    const started = Date.now();
     try {
       const script = buildDiscoveryScript(getSessionLimit());
-      const res = server ? await execRemote(server, script) : await execLocal(script);
+      const res = server
+        ? await execRemoteSmart(server, script, {
+            timeoutMs: getSshTimeoutMs(),
+            title: t('Scanning sessions on {0}…', server.name),
+          })
+        : await execLocal(script, getSshTimeoutMs());
+      if (res.cancelled) {
+        this.errors.set(key, t('Scan skipped by user'));
+        this.cache.set(key, []);
+        return;
+      }
       if (res.timedOut) {
-        this.errors.set(key, '扫描超时');
+        this.errors.set(key, t('Scan timed out'));
         this.cache.set(key, []);
         return;
       }
@@ -98,7 +119,17 @@ export class SessionStore {
       } else if (notes.length > 0) {
         this.errors.set(key, notes.join('\n'));
       }
+      const byAgent = sessions.reduce<Record<string, number>>((m, s) => {
+        m[s.agent] = (m[s.agent] ?? 0) + 1;
+        return m;
+      }, {});
+      log.info(
+        `[scan] ${server ? server.name : 'local'} → ${sessions.length} sessions (${Object.entries(byAgent)
+          .map(([a, n]) => `${a}:${n}`)
+          .join(', ')}) in ${Date.now() - started}ms`,
+      );
     } catch (err) {
+      log.error(`[scan] ${server ? server.name : 'local'} failed: ${String(err)}`);
       this.errors.set(key, String(err));
       this.cache.set(key, []);
     } finally {
@@ -124,6 +155,10 @@ export class WorkspaceProvider implements vscode.TreeDataProvider<Node> {
   private readonly onDidChangeEmitter = new vscode.EventEmitter<Node | undefined>();
   readonly onDidChangeTreeData = this.onDidChangeEmitter.event;
   private wsPathsCache?: Promise<string[]>;
+
+  constructor() {
+    this.store.onDidSettle = () => this.onDidChangeEmitter.fire(undefined);
+  }
 
   refresh(key?: string): void {
     this.wsPathsCache = undefined;
@@ -299,7 +334,14 @@ export class WorkspaceProvider implements vscode.TreeDataProvider<Node> {
 
   private async serverChildren(node: Extract<Node, { kind: 'server' }>): Promise<Node[]> {
     const server = node.isCurrent ? undefined : this.serverConfigFor(node.key);
-    const { sessions, error } = await this.store.sessionsFor(node.isCurrent ? CURRENT_SERVER_KEY : node.key, server);
+    const key = node.isCurrent ? CURRENT_SERVER_KEY : node.key;
+    if (!this.store.has(key)) {
+      if (!this.store.isLoading(key)) {
+        void this.store.sessionsFor(key, server);
+      }
+      return [{ kind: 'info', label: t('Loading sessions…'), severity: 'loading' }];
+    }
+    const { sessions, error } = await this.store.sessionsFor(key, server);
 
     if (node.isCurrent) {
       return this.currentServerChildren(sessions, error);
@@ -428,7 +470,13 @@ export class WorkspaceProvider implements vscode.TreeDataProvider<Node> {
     if (!server) {
       return [{ kind: 'info', label: t('Server not found in config'), severity: 'warning' }];
     }
-    const res = await execRemote(server, `ls -1Ap --color=never ${shq(path)}`, 15_000);
+    const res = await execRemoteSmart(server, `ls -1Ap --color=never ${shq(path)}`, {
+      timeoutMs: getSshTimeoutMs(),
+      title: t('Reading {0} on {1}…', path, server.name),
+    });
+    if (res.cancelled) {
+      return [{ kind: 'info', label: t('Skipped'), severity: 'info' }];
+    }
     if (res.code !== 0) {
       return [
         {
@@ -439,6 +487,7 @@ export class WorkspaceProvider implements vscode.TreeDataProvider<Node> {
         },
       ];
     }
+    log.debug(`[fs] ${server.name}:${path} → ${res.stdout.split('\n').length - 1} entries`);
     const entries = parseLsAp(res.stdout);
     const dirs: Node[] = [];
     const files: Node[] = [];

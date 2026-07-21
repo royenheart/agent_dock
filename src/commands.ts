@@ -22,6 +22,7 @@ import { SessionPanel, type SessionTarget } from './views/sessionPanel';
 import type { Node, WorkspaceProvider } from './tree/workspaceProvider';
 import { CURRENT_SERVER_KEY } from './tree/workspaceProvider';
 import { t } from './i18n';
+import { log } from './log';
 
 type ServerNode = Extract<Node, { kind: 'server' }>;
 type SessionNode = Extract<Node, { kind: 'session' }>;
@@ -555,5 +556,9 @@ export function registerCommands(context: vscode.ExtensionContext, provider: Wor
 
   reg('agentDock.openSettings', async () => {
     await vscode.commands.executeCommand('agentDock.settings.focus');
+  });
+
+  reg('agentDock.showLog', () => {
+    log.show();
   });
 }

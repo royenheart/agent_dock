@@ -105,6 +105,24 @@
           "type": "boolean",
           "default": false,
           "description": "%config.connectInNewWindow.description%"
+        },
+        "agentDock.sshTimeoutSeconds": {
+          "type": "number",
+          "default": 20,
+          "minimum": 5,
+          "maximum": 120,
+          "description": "%config.sshTimeoutSeconds.description%"
+        },
+        "agentDock.logLevel": {
+          "type": "string",
+          "default": "info",
+          "enum": [
+            "debug",
+            "info",
+            "warn",
+            "error"
+          ],
+          "description": "%config.logLevel.description%"
         }
       }
     },
@@ -226,6 +244,12 @@
         "title": "%cmd.createSession%",
         "category": "Agent Workspace",
         "icon": "$(add)"
+      },
+      {
+        "command": "agentDock.showLog",
+        "title": "%cmd.showLog%",
+        "category": "Agent Dock",
+        "icon": "$(output)"
       }
     ],
     "menus": {

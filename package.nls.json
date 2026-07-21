@@ -26,5 +26,8 @@
   "cmd.fsDelete": "Delete",
   "cmd.fsOpenTerminal": "Open in Integrated Terminal",
   "cmd.fsRemoveFromWorkspace": "Remove Folder from Workspace",
-  "cmd.createSession": "New Session…"
+  "cmd.createSession": "New Session…",
+  "config.sshTimeoutSeconds.description": "Timeout (seconds) for a single remote operation over SSH (scan, directory read, file preview).",
+  "config.logLevel.description": "Log level for the \"Agent Dock\" output channel.",
+  "cmd.showLog": "Show Log"
 }
