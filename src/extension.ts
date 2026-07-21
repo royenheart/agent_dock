@@ -12,6 +12,7 @@ export function activate(context: vscode.ExtensionContext): { provider: Workspac
   log.info('Agent Dock activated');
   SessionPanel.init(context.extensionUri);
   const provider = new WorkspaceProvider();
+  provider.initPersistence(context.globalState);
   const tree = vscode.window.createTreeView('agentDock.workspace', {
     treeDataProvider: provider,
     showCollapseAll: true,

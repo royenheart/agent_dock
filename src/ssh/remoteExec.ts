@@ -125,7 +125,7 @@ const SSH_BASE_ARGS = [
   '-o',
   'ControlPath=~/.ssh/agentdock-cm-%r@%h:%p',
   '-o',
-  'ControlPersist=10m',
+  'ControlPersist=8h',
   '-T',
 ];
 

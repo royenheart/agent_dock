@@ -21,8 +21,8 @@ export type Node =
   | { kind: 'otherSessions'; serverKey: string }
   | { kind: 'sessionsRoot'; serverKey: string; folderPath: string }
   | { kind: 'session'; serverKey: string; session: AgentSession; children?: Node[] }
-  | { kind: 'fsEntry'; uri: vscode.Uri; name: string; isDir: boolean }
-  | { kind: 'remoteFsEntry'; serverKey: string; path: string; name: string; isDir: boolean }
+  | { kind: 'fsEntry'; uri: vscode.Uri; name: string; isDir: boolean; parent?: Node }
+  | { kind: 'remoteFsEntry'; serverKey: string; path: string; name: string; isDir: boolean; parent?: Node }
   | { kind: 'info'; label: string; severity: 'info' | 'warning' | 'error' | 'loading'; tooltip?: string };
 
 const AGENT_ICON: Record<AgentKind, string> = {
@@ -60,8 +60,36 @@ export class SessionStore {
   private cache = new Map<string, AgentSession[]>();
   private errors = new Map<string, string>();
   private inflight = new Map<string, Promise<void>>();
+  private memento?: vscode.Memento;
 
   onDidSettle?: (key: string) => void;
+
+  initPersistence(memento: vscode.Memento): void {
+    this.memento = memento;
+    const saved = memento.get<Record<string, { sessions: AgentSession[]; error?: string }>>('agentDock.sessionCache.v1', {});
+    for (const [key, entry] of Object.entries(saved)) {
+      if (Array.isArray(entry.sessions)) {
+        this.cache.set(key, entry.sessions);
+        if (entry.error) {
+          this.errors.set(key, entry.error);
+        }
+      }
+    }
+    if (Object.keys(saved).length > 0) {
+      log.info(`[cache] restored session snapshots for ${Object.keys(saved).length} server(s)`);
+    }
+  }
+
+  async persist(): Promise<void> {
+    if (!this.memento) {
+      return;
+    }
+    const out: Record<string, { sessions: AgentSession[]; error?: string }> = {};
+    for (const [key, sessions] of this.cache) {
+      out[key] = { sessions: sessions.slice(0, 300), error: this.errors.get(key) };
+    }
+    await this.memento.update('agentDock.sessionCache.v1', out);
+  }
 
   has(key: string): boolean {
     return this.cache.has(key);
@@ -114,6 +142,7 @@ export class SessionStore {
         );
       }
       this.cache.set(key, sessions);
+      void this.persist();
       if (sessions.length === 0 && res.code !== 0) {
         this.errors.set(key, (res.stderr || res.stdout).slice(0, 500) || `exit code ${res.code}`);
       } else if (notes.length > 0) {
@@ -146,6 +175,7 @@ export class SessionStore {
       this.cache.delete(key);
       this.errors.delete(key);
     }
+    void this.persist();
   }
 }
 
@@ -163,8 +193,14 @@ export class WorkspaceProvider implements vscode.TreeDataProvider<Node> {
   refresh(key?: string): void {
     this.wsPathsCache = undefined;
     this.remoteDirCache.clear();
+    void this.persistRemoteDirCache();
     this.store.invalidate(key);
+    void this.store.persist();
     this.onDidChangeEmitter.fire(undefined);
+  }
+
+  refreshNode(node?: Node): void {
+    this.onDidChangeEmitter.fire(node);
   }
 
   private currentWsPaths(): Promise<string[]> {
@@ -293,9 +329,9 @@ export class WorkspaceProvider implements vscode.TreeDataProvider<Node> {
       case 'session':
         return node.children ?? [];
       case 'fsEntry':
-        return node.isDir ? this.dirChildren(node.uri) : [];
+        return node.isDir ? this.dirChildren(node.uri, node) : [];
       case 'remoteFsEntry':
-        return node.isDir ? this.remoteDirChildren(node.serverKey, node.path) : [];
+        return node.isDir ? this.remoteDirChildren(node.serverKey, node.path, node) : [];
       default:
         return [];
     }
@@ -419,7 +455,7 @@ export class WorkspaceProvider implements vscode.TreeDataProvider<Node> {
   private async folderChildren(node: Extract<Node, { kind: 'folder' }>): Promise<Node[]> {
     const sessions = await this.sessionsUnder(node.serverKey, node.path);
     if (node.workspaceUri) {
-      const entries = await this.dirChildren(node.workspaceUri);
+      const entries = await this.dirChildren(node.workspaceUri, node);
       if (sessions.length > 0) {
         entries.push({ kind: 'sessionsRoot', serverKey: node.serverKey, folderPath: node.path });
       }
@@ -430,7 +466,7 @@ export class WorkspaceProvider implements vscode.TreeDataProvider<Node> {
         ? [{ kind: 'sessionsRoot', serverKey: node.serverKey, folderPath: node.path }]
         : [];
     }
-    const entries = await this.remoteDirChildren(node.serverKey, node.path);
+    const entries = await this.remoteDirChildren(node.serverKey, node.path, node);
     if (sessions.length > 0) {
       entries.push({ kind: 'sessionsRoot', serverKey: node.serverKey, folderPath: node.path });
     }
@@ -459,11 +495,34 @@ export class WorkspaceProvider implements vscode.TreeDataProvider<Node> {
   }
 
   private remoteDirCache = new Map<string, Node[]>();
+  private memento?: vscode.Memento;
 
-  private async remoteDirChildren(serverKey: string, path: string): Promise<Node[]> {
+  initPersistence(memento: vscode.Memento): void {
+    this.memento = memento;
+    this.store.initPersistence(memento);
+    const saved = memento.get<Record<string, Node[]>>('agentDock.remoteDirCache.v1', {});
+    for (const [key, nodes] of Object.entries(saved)) {
+      if (Array.isArray(nodes)) {
+        this.remoteDirCache.set(key, nodes);
+      }
+    }
+  }
+
+  private async persistRemoteDirCache(): Promise<void> {
+    if (!this.memento) {
+      return;
+    }
+    const entries = [...this.remoteDirCache.entries()].slice(-200);
+    await this.memento.update('agentDock.remoteDirCache.v1', Object.fromEntries(entries));
+  }
+
+  private async remoteDirChildren(serverKey: string, path: string, parent?: Node): Promise<Node[]> {
     const cacheKey = `${serverKey}:${path}`;
     const cached = this.remoteDirCache.get(cacheKey);
     if (cached) {
+      if (parent) {
+        return cached.map((n) => (n.kind === 'remoteFsEntry' ? { ...n, parent } : n));
+      }
       return cached;
     }
     const server = this.serverConfigFor(serverKey);
@@ -510,10 +569,14 @@ export class WorkspaceProvider implements vscode.TreeDataProvider<Node> {
       nodes.push({ kind: 'info', label: t('… {0} entries in total, showing the first 500', entries.length), severity: 'info' });
     }
     this.remoteDirCache.set(cacheKey, nodes);
+    void this.persistRemoteDirCache();
+    if (parent) {
+      return nodes.map((n) => (n.kind === 'remoteFsEntry' ? { ...n, parent } : n));
+    }
     return nodes;
   }
 
-  private async dirChildren(uri: vscode.Uri): Promise<Node[]> {
+  private async dirChildren(uri: vscode.Uri, parent?: Node): Promise<Node[]> {
     try {
       const entries = await vscode.workspace.fs.readDirectory(uri);
       type FsEntry = Extract<Node, { kind: 'fsEntry' }>;
@@ -522,7 +585,7 @@ export class WorkspaceProvider implements vscode.TreeDataProvider<Node> {
       for (const [name, type] of entries.slice(0, 500)) {
         const child = vscode.Uri.joinPath(uri, name);
         const isDir = (type & vscode.FileType.Directory) !== 0;
-        (isDir ? dirs : files).push({ kind: 'fsEntry', uri: child, name, isDir });
+        (isDir ? dirs : files).push({ kind: 'fsEntry', uri: child, name, isDir, parent });
       }
       const cmp = (a: FsEntry, b: FsEntry): number => a.name.localeCompare(b.name);
       dirs.sort(cmp);

@@ -113,11 +113,10 @@ function validateServerName(v: string): string | undefined {
 }
 
 async function saveServer(server: ServerConfig, provider: WorkspaceProvider): Promise<void> {
+  void provider;
   await addServer(server);
-  provider.refresh();
   vscode.window.showInformationMessage(t('Server {0} added', server.name));
 }
-
 interface HostPick extends vscode.QuickPickItem {
   entry?: SshHostEntry;
   manual?: boolean;
@@ -231,7 +230,7 @@ function remoteListSubdirs(server: ServerConfig): (path: string) => Promise<stri
   };
 }
 
-async function addRemoteDirectory(server: ServerConfig, provider: WorkspaceProvider): Promise<void> {
+async function addRemoteDirectory(server: ServerConfig, _provider: WorkspaceProvider): Promise<void> {
   const probe = await vscode.window.withProgress(
     { location: vscode.ProgressLocation.Notification, title: t('Scanning {0}…', server.host) },
     async () => {
@@ -264,7 +263,6 @@ async function addRemoteDirectory(server: ServerConfig, provider: WorkspaceProvi
     return;
   }
   await addServerFolders(server.name, [result.path]);
-  provider.refresh();
   vscode.window.showInformationMessage(t('Directory {0} added to {1}', result.path, server.name));
 }
 
@@ -279,7 +277,6 @@ async function addOtherServerFlow(provider: WorkspaceProvider): Promise<void> {
     return;
   }
   const server = await ensureServerSaved(picked);
-  provider.refresh();
   await addRemoteDirectory(server, provider);
 }
 
@@ -368,7 +365,6 @@ export function registerCommands(context: vscode.ExtensionContext, provider: Wor
     );
     if (ok) {
       await removeServer(node.server.name);
-      provider.refresh();
     }
   });
 
@@ -448,7 +444,7 @@ export function registerCommands(context: vscode.ExtensionContext, provider: Wor
     }
     const target = vscode.Uri.joinPath(dir, fileName);
     await vscode.workspace.fs.writeFile(target, new Uint8Array());
-    provider.refresh();
+    provider.refreshNode(node);
     await vscode.window.showTextDocument(target, { preview: false });
   });
 
@@ -462,7 +458,7 @@ export function registerCommands(context: vscode.ExtensionContext, provider: Wor
       return;
     }
     await vscode.workspace.fs.createDirectory(vscode.Uri.joinPath(dir, folderName));
-    provider.refresh();
+    provider.refreshNode(node);
   });
 
   reg('agentDock.fsRename', async (node: FsEntryNode, newName?: string) => {
@@ -476,7 +472,11 @@ export function registerCommands(context: vscode.ExtensionContext, provider: Wor
       return;
     }
     await vscode.workspace.fs.rename(node.uri, vscode.Uri.joinPath(parentUri(node.uri), name));
-    provider.refresh();
+    if (node.parent) {
+      provider.refreshNode(node.parent);
+    } else {
+      provider.refresh();
+    }
   });
 
   reg('agentDock.fsDelete', async (node: FsEntryNode) => {
@@ -490,7 +490,11 @@ export function registerCommands(context: vscode.ExtensionContext, provider: Wor
     );
     if (ok) {
       await vscode.workspace.fs.delete(node.uri, { recursive: node.isDir });
-      provider.refresh();
+      if (node.parent) {
+        provider.refreshNode(node.parent);
+      } else {
+        provider.refresh();
+      }
     }
   });
 
