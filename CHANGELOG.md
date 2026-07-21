@@ -1,3 +1,9 @@
+## v0.1.3 (2026-07-21)
+
+### Feat
+
+- output-channel logging + non-blocking remote ops with skip/timeout
+
 ## v0.1.2 (2026-07-21)
 
 ### Feat
