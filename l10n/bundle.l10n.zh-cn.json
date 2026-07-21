@@ -97,5 +97,8 @@
   "Select an agent backend": "选择 Agent 后端",
   "Session monitor": "会话监控",
   "calls": "次",
-  "Failed to connect to {0}: {1}. Make sure the Remote-SSH extension is installed and ssh key auth works non-interactively.": "连接 {0} 失败: {1}。请确认已安装 Remote-SSH 扩展且 ssh 密钥免密可用。"
+  "Failed to connect to {0}: {1}. Make sure the Remote-SSH extension is installed and ssh key auth works non-interactively.": "连接 {0} 失败: {1}。请确认已安装 Remote-SSH 扩展且 ssh 密钥免密可用。",
+  "Read-only snapshot on {0} (refresh to update)": "{0} 上的只读快照（刷新以更新）",
+  "Server not found in config": "配置中未找到该服务器",
+  "Failed to read remote directory": "远程目录读取失败"
 }

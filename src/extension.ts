@@ -1,6 +1,7 @@
 import * as vscode from 'vscode';
 import { WorkspaceProvider, type Node } from './tree/workspaceProvider';
 import { SessionDecorationProvider } from './tree/sessionDecorations';
+import { RemoteFsProvider, REMOTE_SCHEME } from './ssh/remoteFsProvider';
 import { SettingsViewProvider } from './views/settingsView';
 import { SessionPanel } from './views/sessionPanel';
 import { registerCommands } from './commands';
@@ -30,6 +31,10 @@ export function activate(context: vscode.ExtensionContext): { provider: Workspac
     tree.onDidChangeSelection(syncSelection),
     treeExplorer.onDidChangeSelection(syncSelection),
     vscode.window.registerFileDecorationProvider(decorations),
+    vscode.workspace.registerFileSystemProvider(REMOTE_SCHEME, new RemoteFsProvider(), {
+      isCaseSensitive: true,
+      isReadonly: true,
+    }),
     vscode.window.registerWebviewViewProvider(SettingsViewProvider.viewType, settings, {
       webviewOptions: { retainContextWhenHidden: true },
     }),

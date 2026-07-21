@@ -4,7 +4,9 @@ import { AGENT_LABEL } from '../model';
 import { classifyServers, getCurrentContext, getCurrentDisplayName, getServers, getSessionLimit } from '../config';
 import { buildDiscoveryScript } from '../agents/discoveryScript';
 import { parseDiscoveryOutput } from '../agents/parse';
-import { execLocal, execRemote } from '../ssh/remoteExec';
+import { execLocal, execRemote, shq } from '../ssh/remoteExec';
+import { joinRemotePath, remoteUri } from '../ssh/remoteFsProvider';
+import { parseLsAp } from '../ssh/remoteFsParse';
 import { isUnder, normPath, pathBasename, realpathSafe } from '../paths';
 import { groupByCwd, partitionSessions } from './structure';
 import { t } from '../i18n';
@@ -18,6 +20,7 @@ export type Node =
   | { kind: 'sessionsRoot'; serverKey: string; folderPath: string }
   | { kind: 'session'; serverKey: string; session: AgentSession; children?: Node[] }
   | { kind: 'fsEntry'; uri: vscode.Uri; name: string; isDir: boolean }
+  | { kind: 'remoteFsEntry'; serverKey: string; path: string; name: string; isDir: boolean }
   | { kind: 'info'; label: string; severity: 'info' | 'warning' | 'error' | 'loading'; tooltip?: string };
 
 const AGENT_ICON: Record<AgentKind, string> = {
@@ -124,6 +127,7 @@ export class WorkspaceProvider implements vscode.TreeDataProvider<Node> {
 
   refresh(key?: string): void {
     this.wsPathsCache = undefined;
+    this.remoteDirCache.clear();
     this.store.invalidate(key);
     this.onDidChangeEmitter.fire(undefined);
   }
@@ -205,6 +209,21 @@ export class WorkspaceProvider implements vscode.TreeDataProvider<Node> {
         }
         return item;
       }
+      case 'remoteFsEntry': {
+        const item = new vscode.TreeItem(
+          node.name,
+          node.isDir ? vscode.TreeItemCollapsibleState.Collapsed : vscode.TreeItemCollapsibleState.None,
+        );
+        item.contextValue = node.isDir ? 'remoteFsDir' : 'remoteFsFile';
+        item.iconPath = node.isDir ? vscode.ThemeIcon.Folder : vscode.ThemeIcon.File;
+        item.tooltip = t('Read-only snapshot on {0} (refresh to update)', node.serverKey);
+        if (!node.isDir) {
+          const uri = remoteUri(node.serverKey, node.path);
+          item.resourceUri = uri;
+          item.command = { command: 'vscode.open', title: 'Open File', arguments: [uri] };
+        }
+        return item;
+      }
       case 'info': {
         const item = new vscode.TreeItem(node.label, vscode.TreeItemCollapsibleState.None);
         item.iconPath = new vscode.ThemeIcon(
@@ -240,6 +259,8 @@ export class WorkspaceProvider implements vscode.TreeDataProvider<Node> {
         return node.children ?? [];
       case 'fsEntry':
         return node.isDir ? this.dirChildren(node.uri) : [];
+      case 'remoteFsEntry':
+        return node.isDir ? this.remoteDirChildren(node.serverKey, node.path) : [];
       default:
         return [];
     }
@@ -367,7 +388,11 @@ export class WorkspaceProvider implements vscode.TreeDataProvider<Node> {
         ? [{ kind: 'sessionsRoot', serverKey: node.serverKey, folderPath: node.path }]
         : [];
     }
-    return sessions;
+    const entries = await this.remoteDirChildren(node.serverKey, node.path);
+    if (sessions.length > 0) {
+      entries.push({ kind: 'sessionsRoot', serverKey: node.serverKey, folderPath: node.path });
+    }
+    return entries;
   }
 
   private async sessionsUnder(serverKey: string, folderPath: string): Promise<Node[]> {
@@ -389,6 +414,54 @@ export class WorkspaceProvider implements vscode.TreeDataProvider<Node> {
       }
     }
     return top.map((s) => ({ kind: 'session', serverKey, session: s, children: childrenOf.get(s.id) }));
+  }
+
+  private remoteDirCache = new Map<string, Node[]>();
+
+  private async remoteDirChildren(serverKey: string, path: string): Promise<Node[]> {
+    const cacheKey = `${serverKey}:${path}`;
+    const cached = this.remoteDirCache.get(cacheKey);
+    if (cached) {
+      return cached;
+    }
+    const server = this.serverConfigFor(serverKey);
+    if (!server) {
+      return [{ kind: 'info', label: t('Server not found in config'), severity: 'warning' }];
+    }
+    const res = await execRemote(server, `ls -1Ap --color=never ${shq(path)}`, 15_000);
+    if (res.code !== 0) {
+      return [
+        {
+          kind: 'info',
+          label: t('Failed to read remote directory'),
+          severity: 'warning',
+          tooltip: res.stderr.slice(0, 300) || `exit ${res.code}`,
+        },
+      ];
+    }
+    const entries = parseLsAp(res.stdout);
+    const dirs: Node[] = [];
+    const files: Node[] = [];
+    for (const e of entries.slice(0, 500)) {
+      const child: Node = {
+        kind: 'remoteFsEntry',
+        serverKey,
+        path: joinRemotePath(path, e.name),
+        name: e.name,
+        isDir: e.isDir,
+      };
+      (e.isDir ? dirs : files).push(child);
+    }
+    const cmp = (a: Extract<Node, { kind: 'remoteFsEntry' }>, b: Extract<Node, { kind: 'remoteFsEntry' }>): number =>
+      a.name.localeCompare(b.name);
+    (dirs as Extract<Node, { kind: 'remoteFsEntry' }>[]).sort(cmp);
+    (files as Extract<Node, { kind: 'remoteFsEntry' }>[]).sort(cmp);
+    const nodes: Node[] = [...dirs, ...files];
+    if (entries.length > 500) {
+      nodes.push({ kind: 'info', label: t('… {0} entries in total, showing the first 500', entries.length), severity: 'info' });
+    }
+    this.remoteDirCache.set(cacheKey, nodes);
+    return nodes;
   }
 
   private async dirChildren(uri: vscode.Uri): Promise<Node[]> {
