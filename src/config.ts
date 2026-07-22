@@ -80,6 +80,11 @@ export function getSshTimeoutMs(): number {
   return Math.min(Math.max(seconds, 5), 120) * 1000;
 }
 
+export function getSshConnectionPersist(): string {
+  const raw = vscode.workspace.getConfiguration(SECTION).get<string>('sshConnectionPersist', '8h').trim();
+  return /^(\d+[smh]?|yes|0)$/.test(raw) ? raw : '8h';
+}
+
 export function getConnectInNewWindow(): boolean {
   return vscode.workspace
     .getConfiguration(SECTION)

@@ -1,5 +1,6 @@
 import { spawn } from 'node:child_process';
 import type { ServerConfig } from '../model';
+import { getSshConnectionPersist } from '../config';
 import { log } from '../log';
 
 export interface ExecResult {
@@ -115,19 +116,21 @@ export function sshDestination(server: ServerConfig): string {
   return `${server.user ? `${server.user}@` : ''}${server.host}`;
 }
 
-const SSH_BASE_ARGS = [
-  '-o',
-  'BatchMode=yes',
-  '-o',
-  'ConnectTimeout=8',
-  '-o',
-  'ControlMaster=auto',
-  '-o',
-  'ControlPath=~/.ssh/agentdock-cm-%r@%h:%p',
-  '-o',
-  'ControlPersist=8h',
-  '-T',
-];
+function sshBaseArgs(): string[] {
+  const persist = getSshConnectionPersist();
+  const reuse =
+    persist === '0'
+      ? []
+      : [
+          '-o',
+          'ControlMaster=auto',
+          '-o',
+          'ControlPath=~/.ssh/agentdock-cm-%r@%h:%p',
+          '-o',
+          `ControlPersist=${persist}`,
+        ];
+  return ['-o', 'BatchMode=yes', '-o', 'ConnectTimeout=8', ...reuse, '-T'];
+}
 
 /**
  * Run a bash script on a remote server via the system ssh client.
@@ -140,7 +143,7 @@ export async function execRemote(
   timeoutMs = 60_000,
   opts?: ExecOptions,
 ): Promise<ExecResult> {
-  const args = [...SSH_BASE_ARGS];
+  const args = sshBaseArgs();
   if (server.port) {
     args.push('-p', String(server.port));
   }
@@ -170,7 +173,7 @@ export async function execRemoteBuffer(
   timeoutMs = 60_000,
   opts?: ExecOptions,
 ): Promise<ExecBufferResult> {
-  const args = [...SSH_BASE_ARGS];
+  const args = sshBaseArgs();
   if (server.port) {
     args.push('-p', String(server.port));
   }

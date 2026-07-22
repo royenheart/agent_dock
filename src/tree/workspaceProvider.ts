@@ -60,6 +60,7 @@ export class SessionStore {
   private cache = new Map<string, AgentSession[]>();
   private errors = new Map<string, string>();
   private inflight = new Map<string, Promise<void>>();
+  private stale = new Set<string>();
   private memento?: vscode.Memento;
 
   onDidSettle?: (key: string) => void;
@@ -68,15 +69,16 @@ export class SessionStore {
     this.memento = memento;
     const saved = memento.get<Record<string, { sessions: AgentSession[]; error?: string }>>('agentDock.sessionCache.v1', {});
     for (const [key, entry] of Object.entries(saved)) {
-      if (Array.isArray(entry.sessions)) {
+      if (Array.isArray(entry.sessions) && entry.sessions.length > 0) {
         this.cache.set(key, entry.sessions);
+        this.stale.add(key);
         if (entry.error) {
           this.errors.set(key, entry.error);
         }
       }
     }
-    if (Object.keys(saved).length > 0) {
-      log.info(`[cache] restored session snapshots for ${Object.keys(saved).length} server(s)`);
+    if (this.stale.size > 0) {
+      log.info(`[cache] restored session snapshots for ${this.stale.size} server(s)`);
     }
   }
 
@@ -93,6 +95,18 @@ export class SessionStore {
 
   has(key: string): boolean {
     return this.cache.has(key);
+  }
+
+  isStale(key: string): boolean {
+    return this.stale.has(key);
+  }
+
+  revalidate(key: string, server: ServerConfig | undefined): void {
+    if (this.inflight.has(key)) {
+      return;
+    }
+    log.debug(`[cache] revalidating ${key}`);
+    this.inflight.set(key, this.fetch(key, server));
   }
 
   isLoading(key: string): boolean {
@@ -162,6 +176,7 @@ export class SessionStore {
       this.errors.set(key, String(err));
       this.cache.set(key, []);
     } finally {
+      this.stale.delete(key);
       this.inflight.delete(key);
       this.onDidSettle?.(key);
     }
@@ -377,6 +392,9 @@ export class WorkspaceProvider implements vscode.TreeDataProvider<Node> {
       }
       return [{ kind: 'info', label: t('Loading sessions…'), severity: 'loading' }];
     }
+    if (this.store.isStale(key)) {
+      this.store.revalidate(key, server);
+    }
     const { sessions, error } = await this.store.sessionsFor(key, server);
 
     if (node.isCurrent) {
@@ -495,6 +513,7 @@ export class WorkspaceProvider implements vscode.TreeDataProvider<Node> {
   }
 
   private remoteDirCache = new Map<string, Node[]>();
+  private staleDirs = new Set<string>();
   private memento?: vscode.Memento;
 
   initPersistence(memento: vscode.Memento): void {
@@ -504,6 +523,7 @@ export class WorkspaceProvider implements vscode.TreeDataProvider<Node> {
     for (const [key, nodes] of Object.entries(saved)) {
       if (Array.isArray(nodes)) {
         this.remoteDirCache.set(key, nodes);
+        this.staleDirs.add(key);
       }
     }
   }
@@ -520,11 +540,19 @@ export class WorkspaceProvider implements vscode.TreeDataProvider<Node> {
     const cacheKey = `${serverKey}:${path}`;
     const cached = this.remoteDirCache.get(cacheKey);
     if (cached) {
+      if (this.staleDirs.delete(cacheKey)) {
+        void this.fetchRemoteDir(serverKey, path).then(() => this.onDidChangeEmitter.fire(undefined));
+      }
       if (parent) {
         return cached.map((n) => (n.kind === 'remoteFsEntry' ? { ...n, parent } : n));
       }
       return cached;
     }
+    return this.fetchRemoteDir(serverKey, path, parent);
+  }
+
+  private async fetchRemoteDir(serverKey: string, path: string, parent?: Node): Promise<Node[]> {
+    const cacheKey = `${serverKey}:${path}`;
     const server = this.serverConfigFor(serverKey);
     if (!server) {
       return [{ kind: 'info', label: t('Server not found in config'), severity: 'warning' }];

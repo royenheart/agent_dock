@@ -123,6 +123,12 @@
             "error"
           ],
           "description": "%config.logLevel.description%"
+        },
+        "agentDock.sshConnectionPersist": {
+          "type": "string",
+          "default": "8h",
+          "pattern": "^([0-9]+[smh]?|yes|0)$",
+          "description": "%config.sshConnectionPersist.description%"
         }
       }
     },
