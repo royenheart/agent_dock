@@ -1,3 +1,10 @@
+## v0.1.4 (2026-07-22)
+
+### Feat
+
+- configurable ssh persist, stale-while-revalidate, README refresh
+- targeted refresh, persisted snapshots, longer-lived ssh connections
+
 ## v0.1.3 (2026-07-21)
 
 ### Feat
