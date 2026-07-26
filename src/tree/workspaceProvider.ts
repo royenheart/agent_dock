@@ -1,11 +1,12 @@
 import * as vscode from 'vscode';
-import type { AgentKind, AgentSession, ServerConfig } from '../model';
+import type { AgentKind, AgentSession, PortForward, ServerConfig } from '../model';
 import { AGENT_LABEL } from '../model';
 import { classifyServers, getCurrentContext, getCurrentDisplayName, getServers, getSessionLimit, getSshTimeoutMs } from '../config';
 import { buildDiscoveryScript } from '../agents/discoveryScript';
 import { parseDiscoveryOutput } from '../agents/parse';
 import { execLocal, shq } from '../ssh/remoteExec';
 import { execRemoteSmart } from '../ssh/progress';
+import { isForwardActive } from '../ssh/portForward';
 import { joinRemotePath, remoteUri } from '../ssh/remoteFsProvider';
 import { parseLsAp } from '../ssh/remoteFsParse';
 import { isUnder, normPath, pathBasename, realpathSafe } from '../paths';
@@ -23,6 +24,8 @@ export type Node =
   | { kind: 'session'; serverKey: string; session: AgentSession; children?: Node[] }
   | { kind: 'fsEntry'; uri: vscode.Uri; name: string; isDir: boolean; parent?: Node }
   | { kind: 'remoteFsEntry'; serverKey: string; path: string; name: string; isDir: boolean; parent?: Node }
+  | { kind: 'portsRoot'; serverKey: string }
+  | { kind: 'portForward'; serverKey: string; forward: PortForward; parent?: Node }
   | { kind: 'info'; label: string; severity: 'info' | 'warning' | 'error' | 'loading'; tooltip?: string };
 
 const AGENT_ICON: Record<AgentKind, string> = {
@@ -315,6 +318,32 @@ export class WorkspaceProvider implements vscode.TreeDataProvider<Node> {
         }
         return item;
       }
+      case 'portsRoot': {
+        const item = new vscode.TreeItem(t('Port forwards'), vscode.TreeItemCollapsibleState.Collapsed);
+        item.iconPath = new vscode.ThemeIcon('plug');
+        item.contextValue = 'portsRoot';
+        item.tooltip = t('SSH local port forwarding via {0}', node.serverKey);
+        return item;
+      }
+      case 'portForward': {
+        const f = node.forward;
+        const activeNow = isForwardActive(node.serverKey, f);
+        const item = new vscode.TreeItem(
+          `${f.localPort} → ${f.remoteHost ?? 'localhost'}:${f.remotePort}`,
+          vscode.TreeItemCollapsibleState.None,
+        );
+        item.iconPath = new vscode.ThemeIcon('radio-tower');
+        item.contextValue = activeNow ? 'portForward.active' : 'portForward.inactive';
+        item.description = activeNow ? t('forwarding') : undefined;
+        item.tooltip = t(
+          'Forward localhost:{0} to {1}:{2} via {3}',
+          String(f.localPort),
+          f.remoteHost ?? 'localhost',
+          String(f.remotePort),
+          node.serverKey,
+        );
+        return item;
+      }
       case 'info': {
         const item = new vscode.TreeItem(node.label, vscode.TreeItemCollapsibleState.None);
         item.iconPath = new vscode.ThemeIcon(
@@ -352,6 +381,13 @@ export class WorkspaceProvider implements vscode.TreeDataProvider<Node> {
         return node.isDir ? this.dirChildren(node.uri, node) : [];
       case 'remoteFsEntry':
         return node.isDir ? this.remoteDirChildren(node.serverKey, node.path, node) : [];
+      case 'portsRoot': {
+        const forwards = this.serverConfigFor(node.serverKey)?.forwards ?? [];
+        if (forwards.length === 0) {
+          return [{ kind: 'info', label: t('No port forwards (right-click to add)'), severity: 'info' }];
+        }
+        return forwards.map((forward) => ({ kind: 'portForward', serverKey: node.serverKey, forward, parent: node }));
+      }
       default:
         return [];
     }
@@ -428,6 +464,8 @@ export class WorkspaceProvider implements vscode.TreeDataProvider<Node> {
     if (nodes.length === 0) {
       nodes.push({ kind: 'info', label: t('No agent sessions found'), severity: 'info' });
     }
+    // 当前服务器的转发由原生「端口」视图负责，这里只给远程服务器挂转发管理
+    nodes.push({ kind: 'portsRoot', serverKey: node.key });
     return nodes;
   }
 

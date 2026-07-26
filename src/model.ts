@@ -14,6 +14,15 @@ export interface ServerConfig {
   user?: string;
   port?: number;
   folders?: string[];
+  forwards?: PortForward[];
+}
+
+/** SSH local port forward: localhost:localPort → remoteHost:remotePort via the server. */
+export interface PortForward {
+  localPort: number;
+  /** Target host reachable from the server (default localhost). */
+  remoteHost?: string;
+  remotePort: number;
 }
 
 /** A discovered agent session on some server. */

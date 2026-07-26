@@ -30,5 +30,9 @@
   "config.sshTimeoutSeconds.description": "Timeout (seconds) for a single remote operation over SSH (scan, directory read, file preview).",
   "config.logLevel.description": "Log level for the \"Agent Dock\" output channel.",
   "cmd.showLog": "Show Log",
-  "config.sshConnectionPersist.description": "How long to keep idle SSH master connections alive for reuse (e.g. \"10m\", \"8h\", \"yes\" for indefinite, \"0\" to disable reuse)."
+  "config.sshConnectionPersist.description": "How long to keep idle SSH master connections alive for reuse (e.g. \"10m\", \"8h\", \"yes\" for indefinite, \"0\" to disable reuse).",
+  "cmd.portForwardAdd": "Add Port Forward…",
+  "cmd.portForwardStart": "Start Forwarding",
+  "cmd.portForwardStop": "Stop Forwarding",
+  "cmd.portForwardRemove": "Remove Port Forward"
 }

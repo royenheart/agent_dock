@@ -1,20 +1,23 @@
 import * as os from 'node:os';
 import * as fsp from 'node:fs/promises';
 import * as vscode from 'vscode';
-import type { ServerConfig } from './model';
+import type { PortForward, ServerConfig } from './model';
 import {
   addServer,
   addServerFolders,
+  ensureCurrentServerRegistered,
   getConnectInNewWindow,
   getCurrentContext,
   getServers,
   getSessionLimit,
   removeServer,
+  updateServerForwards,
 } from './config';
 import { resumeCommand } from './agents/resume';
 import { buildDiscoveryScript } from './agents/discoveryScript';
 import { parseDiscoveryOutput } from './agents/parse';
 import { execRemote, sshDestination, shq } from './ssh/remoteExec';
+import { forwardSpec, setOnDidChange, startForward, stopForward } from './ssh/portForward';
 import { readSshConfigHosts, type SshHostEntry } from './ssh/sshConfig';
 import { pathBasename } from './paths';
 import { pickDirectory } from './views/dirPicker';
@@ -28,6 +31,8 @@ type ServerNode = Extract<Node, { kind: 'server' }>;
 type SessionNode = Extract<Node, { kind: 'session' }>;
 type FsEntryNode = Extract<Node, { kind: 'fsEntry' }>;
 type FolderNode = Extract<Node, { kind: 'folder' }>;
+type PortsRootNode = Extract<Node, { kind: 'portsRoot' }>;
+type PortForwardNode = Extract<Node, { kind: 'portForward' }>;
 
 function parentUri(uri: vscode.Uri): vscode.Uri {
   return vscode.Uri.joinPath(uri, '..');
@@ -371,7 +376,12 @@ export function registerCommands(context: vscode.ExtensionContext, provider: Wor
     context.subscriptions.push(vscode.commands.registerCommand(id, fn));
   };
 
-  reg('agentDock.refresh', () => provider.refresh());
+  setOnDidChange(() => provider.refreshFs());
+
+  reg('agentDock.refresh', async () => {
+    await ensureCurrentServerRegistered();
+    provider.refresh();
+  });
 
   reg('agentDock.addServer', (node?: ServerNode) => addDirectoryFlow(provider, node));
 
@@ -577,6 +587,78 @@ export function registerCommands(context: vscode.ExtensionContext, provider: Wor
       );
     }
     return ok;
+  });
+
+  reg('agentDock.portForwardAdd', async (node?: PortsRootNode | ServerNode) => {
+    const key =
+      node?.kind === 'portsRoot' ? node.serverKey : node?.kind === 'server' && !node.isCurrent ? node.key : undefined;
+    const server = key ? getServers().find((s) => s.name === key) : resolveTargetServer(provider);
+    if (!server) {
+      return;
+    }
+    const input = await vscode.window.showInputBox({
+      prompt: t('Forward spec: localPort:remotePort or localPort:remoteHost:remotePort'),
+      placeHolder: '8080:80  ·  13306:db.internal:3306',
+      validateInput: (v) =>
+        /^\d+:(?:[\w.-]+:)?\d+$/.test(v.trim())
+          ? undefined
+          : t('Format: localPort:remotePort or localPort:remoteHost:remotePort'),
+    });
+    if (!input) {
+      return;
+    }
+    const parts = input.trim().split(':');
+    const forward: PortForward =
+      parts.length === 2
+        ? { localPort: Number(parts[0]), remotePort: Number(parts[1]) }
+        : { localPort: Number(parts[0]), remoteHost: parts[1], remotePort: Number(parts[2]) };
+    const forwards = server.forwards ?? [];
+    if (forwards.some((f) => forwardSpec(f) === forwardSpec(forward))) {
+      vscode.window.showInformationMessage(t('This forward already exists'));
+      return;
+    }
+    await updateServerForwards(server.name, [...forwards, forward]);
+    provider.refresh();
+  });
+
+  reg('agentDock.portForwardStart', async (node: PortForwardNode) => {
+    const server = node?.kind === 'portForward' ? getServers().find((s) => s.name === node.serverKey) : undefined;
+    if (!server) {
+      return;
+    }
+    const f = node.forward;
+    try {
+      await startForward(server, f);
+      vscode.window.showInformationMessage(
+        t(
+          'Forwarding localhost:{0} to {1}:{2} via {3}',
+          String(f.localPort),
+          f.remoteHost ?? 'localhost',
+          String(f.remotePort),
+          server.name,
+        ),
+      );
+    } catch (err) {
+      vscode.window.showErrorMessage(t('Failed to start forwarding: {0}', String(err)));
+    }
+  });
+
+  reg('agentDock.portForwardStop', async (node: PortForwardNode) => {
+    const server = node?.kind === 'portForward' ? getServers().find((s) => s.name === node.serverKey) : undefined;
+    if (server) {
+      await stopForward(server, node.forward);
+    }
+  });
+
+  reg('agentDock.portForwardRemove', async (node: PortForwardNode) => {
+    const server = node?.kind === 'portForward' ? getServers().find((s) => s.name === node.serverKey) : undefined;
+    if (!server) {
+      return;
+    }
+    await stopForward(server, node.forward);
+    const spec = forwardSpec(node.forward);
+    await updateServerForwards(server.name, (server.forwards ?? []).filter((f) => forwardSpec(f) !== spec));
+    provider.refresh();
   });
 
   reg('agentDock.openSettings', async () => {

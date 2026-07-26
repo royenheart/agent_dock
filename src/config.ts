@@ -1,10 +1,32 @@
 import * as os from 'node:os';
 import * as vscode from 'vscode';
-import type { ServerConfig } from './model';
+import type { PortForward, ServerConfig } from './model';
 import { log } from './log';
 
 const SECTION = 'agentDock';
 const LEGACY_SECTIONS = ['vscoder', 'agentWorkspace'];
+
+function parseForwards(raw: unknown): PortForward[] | undefined {
+  if (!Array.isArray(raw)) {
+    return undefined;
+  }
+  const out: PortForward[] = [];
+  for (const item of raw) {
+    if (typeof item !== 'object' || item === null) {
+      continue;
+    }
+    const r = item as Record<string, unknown>;
+    if (typeof r.localPort !== 'number' || typeof r.remotePort !== 'number') {
+      continue;
+    }
+    out.push({
+      localPort: r.localPort,
+      remotePort: r.remotePort,
+      remoteHost: typeof r.remoteHost === 'string' ? r.remoteHost : undefined,
+    });
+  }
+  return out.length > 0 ? out : undefined;
+}
 
 export function getServers(): ServerConfig[] {
   const cfg = vscode.workspace.getConfiguration(SECTION);
@@ -36,6 +58,7 @@ export function getServers(): ServerConfig[] {
         user: typeof r.user === 'string' ? r.user : undefined,
         port: typeof r.port === 'number' ? r.port : undefined,
         folders: Array.isArray(r.folders) ? (r.folders as unknown[]).filter((f): f is string => typeof f === 'string') : undefined,
+        forwards: parseForwards(r.forwards),
       });
     }
   }
@@ -71,6 +94,7 @@ async function upsertServer(server: ServerConfig): Promise<void> {
 export async function ensureCurrentServerRegistered(): Promise<void> {
   const ctx = getCurrentContext();
   if (ctx.isLocal || !ctx.sshHost) {
+    log.debug(`[config] register-current skipped: ${ctx.isLocal ? 'local window' : 'no ssh authority (empty workspace?)'}`);
     return;
   }
   const wsPaths = (vscode.workspace.workspaceFolders ?? [])
@@ -124,6 +148,18 @@ export async function addServerFolders(name: string, folders: string[]): Promise
     existing.add(f);
   }
   servers[idx] = { ...servers[idx], folders: [...existing] };
+  await vscode.workspace
+    .getConfiguration(SECTION)
+    .update('servers', servers, vscode.ConfigurationTarget.Global);
+}
+
+export async function updateServerForwards(name: string, forwards: PortForward[]): Promise<void> {
+  const servers = getServers();
+  const idx = servers.findIndex((s) => s.name === name);
+  if (idx < 0) {
+    return;
+  }
+  servers[idx] = { ...servers[idx], forwards };
   await vscode.workspace
     .getConfiguration(SECTION)
     .update('servers', servers, vscode.ConfigurationTarget.Global);

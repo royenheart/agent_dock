@@ -30,5 +30,9 @@
   "config.sshTimeoutSeconds.description": "单次 SSH 远程操作（扫描/目录读取/文件预览）的超时时间（秒）。",
   "config.logLevel.description": "「Agent Dock」输出通道的日志级别。",
   "cmd.showLog": "查看日志",
-  "config.sshConnectionPersist.description": "SSH 主连接复用的保持时长（如 \"10m\"、\"8h\"、\"yes\" 不限，\"0\" 禁用复用）。"
+  "config.sshConnectionPersist.description": "SSH 主连接复用的保持时长（如 \"10m\"、\"8h\"、\"yes\" 不限，\"0\" 禁用复用）。",
+  "cmd.portForwardAdd": "添加端口转发…",
+  "cmd.portForwardStart": "启动转发",
+  "cmd.portForwardStop": "停止转发",
+  "cmd.portForwardRemove": "移除端口转发"
 }

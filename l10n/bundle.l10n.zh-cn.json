@@ -106,5 +106,15 @@
   "Loading sessions…": "会话加载中…",
   "Skipped": "已跳过",
   "Scan skipped by user": "扫描已被用户跳过",
-  "Scan timed out": "扫描超时"
+  "Scan timed out": "扫描超时",
+  "Port forwards": "端口转发",
+  "SSH local port forwarding via {0}": "经 {0} 的 SSH 本地端口转发",
+  "forwarding": "转发中",
+  "Forward localhost:{0} to {1}:{2} via {3}": "将 localhost:{0} 经 {3} 转发到 {1}:{2}",
+  "No port forwards (right-click to add)": "暂无端口转发（右键添加）",
+  "Forward spec: localPort:remotePort or localPort:remoteHost:remotePort": "转发规则：localPort:remotePort 或 localPort:remoteHost:remotePort",
+  "Format: localPort:remotePort or localPort:remoteHost:remotePort": "格式：localPort:remotePort 或 localPort:remoteHost:remotePort",
+  "This forward already exists": "该转发已存在",
+  "Forwarding localhost:{0} to {1}:{2} via {3}": "正在转发 localhost:{0} →（经 {3}）→ {1}:{2}",
+  "Failed to start forwarding: {0}": "启动转发失败: {0}"
 }

@@ -90,6 +90,38 @@
               "port": {
                 "type": "number",
                 "description": "SSH 端口（默认 22）"
+              },
+              "folders": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "description": "固定到 Agent Workspace 的远程目录（绝对路径）"
+              },
+              "forwards": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "required": [
+                    "localPort",
+                    "remotePort"
+                  ],
+                  "properties": {
+                    "localPort": {
+                      "type": "number",
+                      "description": "本地监听端口"
+                    },
+                    "remoteHost": {
+                      "type": "string",
+                      "description": "目标主机（从服务器可达，默认 localhost）"
+                    },
+                    "remotePort": {
+                      "type": "number",
+                      "description": "目标端口"
+                    }
+                  }
+                },
+                "description": "SSH 本地端口转发：localhost:localPort → remoteHost:remotePort"
               }
             }
           }
@@ -256,6 +288,30 @@
         "title": "%cmd.showLog%",
         "category": "Agent Dock",
         "icon": "$(output)"
+      },
+      {
+        "command": "agentDock.portForwardAdd",
+        "title": "%cmd.portForwardAdd%",
+        "category": "Agent Workspace",
+        "icon": "$(add)"
+      },
+      {
+        "command": "agentDock.portForwardStart",
+        "title": "%cmd.portForwardStart%",
+        "category": "Agent Workspace",
+        "icon": "$(play)"
+      },
+      {
+        "command": "agentDock.portForwardStop",
+        "title": "%cmd.portForwardStop%",
+        "category": "Agent Workspace",
+        "icon": "$(debug-stop)"
+      },
+      {
+        "command": "agentDock.portForwardRemove",
+        "title": "%cmd.portForwardRemove%",
+        "category": "Agent Workspace",
+        "icon": "$(trash)"
       }
     ],
     "menus": {
@@ -361,6 +417,26 @@
           "command": "agentDock.createSession",
           "when": "view =~ /^agentDock.workspace/ && (viewItem == folder.workspace || viewItem == folder.remote)",
           "group": "1_session@0"
+        },
+        {
+          "command": "agentDock.portForwardAdd",
+          "when": "view =~ /^agentDock.workspace/ && viewItem == portsRoot",
+          "group": "1_ports@1"
+        },
+        {
+          "command": "agentDock.portForwardStart",
+          "when": "view =~ /^agentDock.workspace/ && viewItem == portForward.inactive",
+          "group": "1_forward@1"
+        },
+        {
+          "command": "agentDock.portForwardStop",
+          "when": "view =~ /^agentDock.workspace/ && viewItem == portForward.active",
+          "group": "1_forward@1"
+        },
+        {
+          "command": "agentDock.portForwardRemove",
+          "when": "view =~ /^agentDock.workspace/ && viewItem =~ /^portForward/",
+          "group": "2_manage@1"
         }
       ]
     }

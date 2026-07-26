@@ -190,6 +190,17 @@ export async function execRemoteBuffer(
   }
 }
 
+/** Run ssh with raw trailing args (e.g. `-O forward` control commands); unlike execRemote nothing is piped to bash. */
+export async function runSsh(server: ServerConfig, extraArgs: string[], timeoutMs = 15_000): Promise<ExecResult> {
+  const args = sshBaseArgs();
+  if (server.port) {
+    args.push('-p', String(server.port));
+  }
+  args.push(...extraArgs);
+  const res = await spawnCollect('ssh', args, undefined, timeoutMs);
+  return { ...res, stdout: res.stdout.toString('utf8') };
+}
+
 /** Run a bash script on the machine the extension host runs on (= current server). */
 export async function execLocal(script: string, timeoutMs = 60_000): Promise<ExecResult> {
   const res = await spawnCollect('bash', ['-s'], script, timeoutMs);
