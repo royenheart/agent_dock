@@ -218,6 +218,11 @@ export class WorkspaceProvider implements vscode.TreeDataProvider<Node> {
     this.onDidChangeEmitter.fire(node);
   }
 
+  /** 文件系统变化专用：只重绘树，不触碰会话缓存与远程目录缓存（配合 FileSystemWatcher 实时刷新） */
+  refreshFs(): void {
+    this.onDidChangeEmitter.fire(undefined);
+  }
+
   private currentWsPaths(): Promise<string[]> {
     if (!this.wsPathsCache) {
       this.wsPathsCache = Promise.all(

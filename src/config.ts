@@ -1,6 +1,7 @@
 import * as os from 'node:os';
 import * as vscode from 'vscode';
 import type { ServerConfig } from './model';
+import { log } from './log';
 
 const SECTION = 'agentDock';
 const LEGACY_SECTIONS = ['vscoder', 'agentWorkspace'];
@@ -46,6 +47,63 @@ export async function addServer(server: ServerConfig): Promise<void> {
   await vscode.workspace
     .getConfiguration(SECTION)
     .update('servers', servers, vscode.ConfigurationTarget.Global);
+}
+
+async function upsertServer(server: ServerConfig): Promise<void> {
+  const servers = getServers();
+  const idx = servers.findIndex((s) => s.name === server.name);
+  if (idx >= 0) {
+    servers[idx] = server;
+  } else {
+    servers.push(server);
+  }
+  await vscode.workspace
+    .getConfiguration(SECTION)
+    .update('servers', servers, vscode.ConfigurationTarget.Global);
+}
+
+/**
+ * 把当前窗口连接的服务器登记进配置，并让其 folders 镜像原生 workspace。
+ * 扩展只有"添加其他服务器"的入口，当前服务器永远不进 settings，导致切到
+ * 别的机器后这台服务器在 AW 里消失或以别名/配置项两种形态重复出现。
+ * 登记后每台机器的配置都会补全为全集，谁当前谁走原生 API。
+ */
+export async function ensureCurrentServerRegistered(): Promise<void> {
+  const ctx = getCurrentContext();
+  if (ctx.isLocal || !ctx.sshHost) {
+    return;
+  }
+  const wsPaths = (vscode.workspace.workspaceFolders ?? [])
+    .filter((f) => f.uri.scheme === 'vscode-remote')
+    .map((f) => f.uri.path);
+  const servers = getServers();
+  const existing = findCurrentServer(servers, ctx.sshHost);
+  if (existing) {
+    // workspace 为空时不动已 pin 的目录，避免误清空
+    const same =
+      wsPaths.length > 0 &&
+      (existing.folders ?? []).length === wsPaths.length &&
+      [...(existing.folders ?? [])].sort().every((v, i) => v === [...wsPaths].sort()[i]);
+    if (wsPaths.length > 0 && !same) {
+      await upsertServer({ ...existing, folders: wsPaths });
+      log.info(`[config] synced ${existing.name} folders from workspace (${wsPaths.length})`);
+    }
+    return;
+  }
+  const m = /^(?:(?<user>[^@]+)@)?(?<host>[^:]+)(?::(?<port>\d+))?$/.exec(ctx.sshHost);
+  let name = m?.groups?.host ?? bareHost(ctx.sshHost);
+  const names = new Set(servers.map((s) => s.name));
+  for (let i = 2; names.has(name); i++) {
+    name = `${m?.groups?.host ?? bareHost(ctx.sshHost)}-${i}`;
+  }
+  await upsertServer({
+    name,
+    host: m?.groups?.host ?? ctx.sshHost,
+    user: m?.groups?.user,
+    port: m?.groups?.port ? Number(m.groups.port) : undefined,
+    folders: wsPaths,
+  });
+  log.info(`[config] registered current server as ${name}`);
 }
 
 export async function removeServer(name: string): Promise<void> {
@@ -125,7 +183,7 @@ export function getCurrentDisplayName(): string {
     return os.hostname() || 'Local';
   }
   if (ctx.sshHost) {
-    const match = getServers().find((s) => hostMatches(ctx.sshHost!, s));
+    const match = findCurrentServer(getServers(), ctx.sshHost);
     return match?.name ?? ctx.sshHost;
   }
   return os.hostname() || ctx.remoteName || 'remote';
@@ -150,6 +208,19 @@ export function hostMatches(authorityHost: string, server: ServerConfig): boolea
   return false;
 }
 
+function bareHost(sshHost: string): string {
+  return sshHost.replace(/^[^@]*@/, '').replace(/:\d+$/, '');
+}
+
+/**
+ * 在配置里找当前窗口对应的服务器。除 host 外兜底比较 name：经 ssh config
+ * 别名连接时 authority 是别名而非配置的 host，只靠 hostMatches 会漏配。
+ */
+export function findCurrentServer(servers: ServerConfig[], sshHost: string): ServerConfig | undefined {
+  const bare = bareHost(sshHost);
+  return servers.find((s) => hostMatches(sshHost, s) || s.name === sshHost || s.name === bare);
+}
+
 /**
  * Split the configured server list into the entry matching the current
  * window (if any) and the remaining remote entries.
@@ -162,9 +233,9 @@ export function classifyServers(servers: ServerConfig[]): {
   if (ctx.isLocal || !ctx.sshHost) {
     return { remotes: servers };
   }
-  const current = servers.find((s) => hostMatches(ctx.sshHost!, s));
+  const current = findCurrentServer(servers, ctx.sshHost);
   return {
     current,
-    remotes: current ? servers.filter((s) => s !== current) : servers,
+    remotes: current ? servers.filter((s) => s !== current && s.name !== current.name) : servers,
   };
 }

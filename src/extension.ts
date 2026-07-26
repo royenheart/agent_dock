@@ -5,6 +5,7 @@ import { RemoteFsProvider, REMOTE_SCHEME } from './ssh/remoteFsProvider';
 import { SettingsViewProvider } from './views/settingsView';
 import { SessionPanel } from './views/sessionPanel';
 import { registerCommands } from './commands';
+import { ensureCurrentServerRegistered } from './config';
 import { log } from './log';
 
 export function activate(context: vscode.ExtensionContext): { provider: WorkspaceProvider; decorations: SessionDecorationProvider } {
@@ -44,14 +45,33 @@ export function activate(context: vscode.ExtensionContext): { provider: Workspac
   );
 
   registerCommands(context, provider);
+  void ensureCurrentServerRegistered();
+
+  // 与原生资源管理器同理：watcher 监听当前窗口（本地或远程）磁盘变化，防抖后只重绘树
+  const fsWatcher = vscode.workspace.createFileSystemWatcher('**/*');
+  let fsTimer: ReturnType<typeof setTimeout> | undefined;
+  const scheduleFsRefresh = (): void => {
+    if (fsTimer) {
+      clearTimeout(fsTimer);
+    }
+    fsTimer = setTimeout(() => provider.refreshFs(), 300);
+  };
 
   context.subscriptions.push(
+    fsWatcher,
+    fsWatcher.onDidCreate(scheduleFsRefresh),
+    fsWatcher.onDidChange(scheduleFsRefresh),
+    fsWatcher.onDidDelete(scheduleFsRefresh),
+    { dispose: () => clearTimeout(fsTimer) },
     vscode.workspace.onDidChangeConfiguration((e) => {
       if (e.affectsConfiguration('agentDock')) {
         provider.refresh();
       }
     }),
-    vscode.workspace.onDidChangeWorkspaceFolders(() => provider.refresh()),
+    vscode.workspace.onDidChangeWorkspaceFolders(() => {
+      void ensureCurrentServerRegistered();
+      provider.refresh();
+    }),
   );
 
   return { provider, decorations };

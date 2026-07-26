@@ -89,7 +89,28 @@ async function connectToServer(server: ServerConfig): Promise<void> {
     home = '/';
   }
   const authority = `ssh-remote+${server.user ? `${server.user}@` : ''}${server.host}${server.port ? `:${server.port}` : ''}`;
-  const uri = vscode.Uri.from({ scheme: 'vscode-remote', authority, path: home });
+  // 已 pin 目录时在远端生成 .code-workspace 并整体打开，让原生资源管理器与 AW 的目录集合一致
+  let openPath = server.folders?.[0] ?? home;
+  if (server.folders && server.folders.length > 0) {
+    const wsFile = `${home}/.agent-dock/${server.name.replace(/[^\w.-]+/g, '_')}.code-workspace`;
+    const json = JSON.stringify({ folders: server.folders.map((p) => ({ path: p })) }, null, 2);
+    const b64 = Buffer.from(json, 'utf8').toString('base64');
+    try {
+      const res = await execRemote(
+        server,
+        `mkdir -p ${shq(`${home}/.agent-dock`)} && printf %s ${shq(b64)} | base64 -d > ${shq(wsFile)}`,
+        15_000,
+      );
+      if (res.code === 0) {
+        openPath = wsFile;
+      } else {
+        log.warn(`[connect] workspace file write failed on ${server.name}: ${res.stderr.slice(0, 200)}`);
+      }
+    } catch (err) {
+      log.warn(`[connect] workspace file write failed on ${server.name}: ${String(err)}`);
+    }
+  }
+  const uri = vscode.Uri.from({ scheme: 'vscode-remote', authority, path: openPath });
   try {
     // Remote-SSH 是客户端侧扩展，远程窗口的扩展宿主探测不到它，故不做安装检查（踩过的坑）
     await vscode.commands.executeCommand('vscode.openFolder', uri, {
