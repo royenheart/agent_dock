@@ -1,32 +1,13 @@
 import * as os from 'node:os';
 import * as vscode from 'vscode';
 import type { PortForward, ServerConfig } from './model';
+import { findCurrentServer, hostMatches, mergeServersByName, parseServerList, planRegistration } from './serverRegistration';
 import { log } from './log';
+
+export { findCurrentServer, hostMatches };
 
 const SECTION = 'agentDock';
 const LEGACY_SECTIONS = ['vscoder', 'agentWorkspace'];
-
-function parseForwards(raw: unknown): PortForward[] | undefined {
-  if (!Array.isArray(raw)) {
-    return undefined;
-  }
-  const out: PortForward[] = [];
-  for (const item of raw) {
-    if (typeof item !== 'object' || item === null) {
-      continue;
-    }
-    const r = item as Record<string, unknown>;
-    if (typeof r.localPort !== 'number' || typeof r.remotePort !== 'number') {
-      continue;
-    }
-    out.push({
-      localPort: r.localPort,
-      remotePort: r.remotePort,
-      remoteHost: typeof r.remoteHost === 'string' ? r.remoteHost : undefined,
-    });
-  }
-  return out.length > 0 ? out : undefined;
-}
 
 export function getServers(): ServerConfig[] {
   const cfg = vscode.workspace.getConfiguration(SECTION);
@@ -40,29 +21,7 @@ export function getServers(): ServerConfig[] {
       }
     }
   }
-  if (!Array.isArray(raw)) {
-    return [];
-  }
-  const out: ServerConfig[] = [];
-  for (const item of raw) {
-    if (
-      typeof item === 'object' &&
-      item !== null &&
-      typeof (item as Record<string, unknown>).name === 'string' &&
-      typeof (item as Record<string, unknown>).host === 'string'
-    ) {
-      const r = item as Record<string, unknown>;
-      out.push({
-        name: r.name as string,
-        host: r.host as string,
-        user: typeof r.user === 'string' ? r.user : undefined,
-        port: typeof r.port === 'number' ? r.port : undefined,
-        folders: Array.isArray(r.folders) ? (r.folders as unknown[]).filter((f): f is string => typeof f === 'string') : undefined,
-        forwards: parseForwards(r.forwards),
-      });
-    }
-  }
-  return out;
+  return parseServerList(raw);
 }
 
 export async function addServer(server: ServerConfig): Promise<void> {
@@ -92,42 +51,63 @@ async function upsertServer(server: ServerConfig): Promise<void> {
  * 登记后每台机器的配置都会补全为全集，谁当前谁走原生 API。
  */
 export async function ensureCurrentServerRegistered(): Promise<void> {
+  await migrateRemoteServersToLocal();
+
   const ctx = getCurrentContext();
-  if (ctx.isLocal || !ctx.sshHost) {
-    log.debug(`[config] register-current skipped: ${ctx.isLocal ? 'local window' : 'no ssh authority (empty workspace?)'}`);
-    return;
-  }
   const wsPaths = (vscode.workspace.workspaceFolders ?? [])
     .filter((f) => f.uri.scheme === 'vscode-remote')
     .map((f) => f.uri.path);
-  const servers = getServers();
-  const existing = findCurrentServer(servers, ctx.sshHost);
-  if (existing) {
-    // workspace 为空时不动已 pin 的目录，避免误清空
-    const same =
-      wsPaths.length > 0 &&
-      (existing.folders ?? []).length === wsPaths.length &&
-      [...(existing.folders ?? [])].sort().every((v, i) => v === [...wsPaths].sort()[i]);
-    if (wsPaths.length > 0 && !same) {
-      await upsertServer({ ...existing, folders: wsPaths });
-      log.info(`[config] synced ${existing.name} folders from workspace (${wsPaths.length})`);
-    }
+  const plan = planRegistration({ isLocal: ctx.isLocal, sshHost: ctx.sshHost, wsPaths, servers: getServers() });
+  switch (plan.action) {
+    case 'skip':
+      log.child('config').debug(`register-current skipped: ${plan.reason}`);
+      return;
+    case 'none':
+      return;
+    case 'sync-folders':
+      await upsertServer({ ...plan.server, folders: plan.folders });
+      log.child('config').info(`synced ${plan.server.name} folders from workspace (${plan.folders.length})`);
+      return;
+    case 'register':
+      await upsertServer(plan.server);
+      log.child('config').info(`registered current server as ${plan.server.name}`);
+      return;
+  }
+}
+
+let migrationAttempted = false;
+
+/**
+ * Global(USER) 写入有粘滞性（VS Code configurationService.toEditableConfigurationTarget）：
+ * key 在远程 user settings 已有值时写入落到远程机的 settings，客户端 settings.json
+ * 看不到，且读取时 remote 覆盖 local。这里把远程列表合并进客户端列表并删除远程值，
+ * 之后写入即回落到客户端单一来源。
+ */
+async function migrateRemoteServersToLocal(): Promise<void> {
+  const cfg = vscode.workspace.getConfiguration(SECTION);
+  const insp = cfg.inspect<unknown>('servers');
+  // globalLocalValue/globalRemoteValue 存在于运行时而未出现在 1.96 类型定义里，做带守卫的运行时探测
+  const rec = insp as unknown as Record<string, unknown> | undefined;
+  const hasScopeFields = rec !== undefined && ('globalRemoteValue' in rec || 'globalLocalValue' in rec);
+  const local = hasScopeFields && Array.isArray(rec.globalLocalValue) ? parseServerList(rec.globalLocalValue) : undefined;
+  const remote = hasScopeFields && Array.isArray(rec.globalRemoteValue) ? parseServerList(rec.globalRemoteValue) : undefined;
+  log.child('config').info(
+    `servers scopes: local=${local ? local.length : '—'} remote=${remote ? remote.length : '—'}${hasScopeFields ? '' : ' (scope fields unavailable)'}`,
+  );
+  if (hasScopeFields && (!remote || remote.length === 0)) {
     return;
   }
-  const m = /^(?:(?<user>[^@]+)@)?(?<host>[^:]+)(?::(?<port>\d+))?$/.exec(ctx.sshHost);
-  let name = m?.groups?.host ?? bareHost(ctx.sshHost);
-  const names = new Set(servers.map((s) => s.name));
-  for (let i = 2; names.has(name); i++) {
-    name = `${m?.groups?.host ?? bareHost(ctx.sshHost)}-${i}`;
+  // 旧运行时探测不到分层字段：每会话做一次删除+重写兜底（无粘滞时等价于原样重写）
+  if (!hasScopeFields) {
+    if (migrationAttempted) {
+      return;
+    }
+    migrationAttempted = true;
   }
-  await upsertServer({
-    name,
-    host: m?.groups?.host ?? ctx.sshHost,
-    user: m?.groups?.user,
-    port: m?.groups?.port ? Number(m.groups.port) : undefined,
-    folders: wsPaths,
-  });
-  log.info(`[config] registered current server as ${name}`);
+  const merged = remote && remote.length > 0 ? mergeServersByName(local ?? getServers(), remote) : getServers();
+  await cfg.update('servers', undefined, vscode.ConfigurationTarget.Global);
+  await cfg.update('servers', merged, vscode.ConfigurationTarget.Global);
+  log.child('config').info(`migrated servers into client user settings (${merged.length} entries)`);
 }
 
 export async function removeServer(name: string): Promise<void> {
@@ -223,38 +203,6 @@ export function getCurrentDisplayName(): string {
     return match?.name ?? ctx.sshHost;
   }
   return os.hostname() || ctx.remoteName || 'remote';
-}
-
-/** Loose match: authority host may carry user@ / :port decorations. */
-export function hostMatches(authorityHost: string, server: ServerConfig): boolean {
-  if (authorityHost === server.host) {
-    return true;
-  }
-  if (server.user && authorityHost === `${server.user}@${server.host}`) {
-    return true;
-  }
-  // strip trailing :port from authority candidate
-  const noPort = authorityHost.replace(/:\d+$/, '');
-  if (noPort === server.host) {
-    return true;
-  }
-  if (server.user && noPort === `${server.user}@${server.host}`) {
-    return true;
-  }
-  return false;
-}
-
-function bareHost(sshHost: string): string {
-  return sshHost.replace(/^[^@]*@/, '').replace(/:\d+$/, '');
-}
-
-/**
- * 在配置里找当前窗口对应的服务器。除 host 外兜底比较 name：经 ssh config
- * 别名连接时 authority 是别名而非配置的 host，只靠 hostMatches 会漏配。
- */
-export function findCurrentServer(servers: ServerConfig[], sshHost: string): ServerConfig | undefined {
-  const bare = bareHost(sshHost);
-  return servers.find((s) => hostMatches(sshHost, s) || s.name === sshHost || s.name === bare);
 }
 
 /**

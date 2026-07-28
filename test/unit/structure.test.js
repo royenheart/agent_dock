@@ -1,6 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { isUnder, normPath, pathBasename } = require('../../out/paths');
+const { isUnder, normPath, pathBasename, uriFsPath } = require('../../out/paths');
 const { partitionSessions, groupByCwd } = require('../../out/tree/structure');
 
 function sess(id, cwd, updated = 1000) {
@@ -50,4 +50,11 @@ test('groupByCwd: groups and sorts by latest update', () => {
   assert.equal(groups[0].folderPath, '/y');
   assert.equal(groups[1].folderPath, '/x');
   assert.equal(groups[1].sessions.length, 2);
+});
+
+test('uriFsPath: vscode-remote uses posix path (Windows backslash regression guard)', () => {
+  // Windows 客户端上 vscode-remote URI 的 fsPath 是 \home\x 反斜杠形式
+  assert.equal(uriFsPath({ scheme: 'vscode-remote', path: '/home/u/proj', fsPath: '\\home\\u\\proj' }), '/home/u/proj');
+  assert.equal(uriFsPath({ scheme: 'file', path: '/c/Users/u', fsPath: 'c:\\Users\\u' }), 'c:\\Users\\u');
+  assert.equal(uriFsPath({ scheme: 'file', path: '/home/u', fsPath: '/home/u' }), '/home/u');
 });

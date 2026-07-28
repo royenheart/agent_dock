@@ -1,7 +1,15 @@
 import { spawn } from 'node:child_process';
 import type { ServerConfig } from '../model';
 import { getSshConnectionPersist } from '../config';
-import { log } from '../log';
+import { buildSshBaseArgs, shq } from './sshArgs';
+import { log, tail } from '../log';
+
+export { shq };
+
+const slog = log.child('ssh');
+
+/** 进程级调用序号：发起与完成各打一条，多并发下能对上号。 */
+let callSeq = 0;
 
 export interface ExecResult {
   stdout: string;
@@ -116,20 +124,14 @@ export function sshDestination(server: ServerConfig): string {
   return `${server.user ? `${server.user}@` : ''}${server.host}`;
 }
 
+let muxDisabledLogged = false;
+
 function sshBaseArgs(): string[] {
-  const persist = getSshConnectionPersist();
-  const reuse =
-    persist === '0'
-      ? []
-      : [
-          '-o',
-          'ControlMaster=auto',
-          '-o',
-          'ControlPath=~/.ssh/agentdock-cm-%r@%h:%p',
-          '-o',
-          `ControlPersist=${persist}`,
-        ];
-  return ['-o', 'BatchMode=yes', '-o', 'ConnectTimeout=8', ...reuse, '-T'];
+  if (process.platform === 'win32' && !muxDisabledLogged) {
+    muxDisabledLogged = true;
+    slog.info('ControlMaster disabled: Win32-OpenSSH does not support connection multiplexing');
+  }
+  return buildSshBaseArgs(getSshConnectionPersist(), process.platform);
 }
 
 /**
@@ -137,6 +139,26 @@ function sshBaseArgs(): string[] {
  * The script is piped to `bash -s` over stdin, so no quoting is needed.
  * BatchMode disables interactive auth — failures come back fast.
  */
+/**
+ * 发起/完成成对打日志（同一 id）：发起记录完整 argv，完成记录耗时与
+ * stderr tail。getsockname 这类非致命报错 exit code 仍为 0，只有
+ * stderr 里可见，所以成功路径也要在 debug 级输出 stderr。
+ */
+function logResult(id: number, dest: string, res: ExecBufferResult, ms: number): void {
+  const status = res.cancelled ? 'cancelled' : res.timedOut ? 'timeout' : `code=${res.code}`;
+  const fields = { ms, stderr: res.stderr.trim() ? tail(res.stderr) : undefined };
+  if (res.cancelled || res.timedOut || res.code !== 0) {
+    slog.warn(`#${id} ✗ ${dest} ${status}`, fields);
+  } else {
+    slog.debug(`#${id} ✓ ${dest} ${status}`, fields);
+  }
+}
+
+function logSpawnError(id: number, dest: string, err: unknown): never {
+  slog.error(`#${id} ✗ ${dest} spawn failed`, { error: String(err) });
+  throw err;
+}
+
 export async function execRemote(
   server: ServerConfig,
   script: string,
@@ -149,18 +171,14 @@ export async function execRemote(
   }
   args.push(sshDestination(server), 'bash', '-s');
   const dest = sshDestination(server);
-  const started = Date.now();
+  const id = ++callSeq;
+  const enqueued = Date.now();
   await sshSemaphore.acquire();
+  const started = Date.now();
   try {
-    log.debug(`[ssh] ${dest} ← ${scriptSummary(script)}`);
-    const res = await spawnCollect('ssh', args, script, timeoutMs, opts?.signal);
-    const ms = Date.now() - started;
-    const status = res.cancelled ? 'cancelled' : res.timedOut ? 'timeout' : `code=${res.code}`;
-    if (res.cancelled || res.timedOut || res.code !== 0) {
-      log.warn(`[ssh] ${dest} ${status} in ${ms}ms`);
-    } else {
-      log.debug(`[ssh] ${dest} ${status} in ${ms}ms`);
-    }
+    slog.debug(`#${id} → ${dest} ← ${scriptSummary(script)}`, { argv: `ssh ${args.join(' ')}`, scriptBytes: script.length, queueMs: started - enqueued || undefined });
+    const res = await spawnCollect('ssh', args, script, timeoutMs, opts?.signal).catch((e) => logSpawnError(id, dest, e));
+    logResult(id, dest, res, Date.now() - started);
     return { ...res, stdout: res.stdout.toString('utf8') };
   } finally {
     sshSemaphore.release();
@@ -178,12 +196,14 @@ export async function execRemoteBuffer(
     args.push('-p', String(server.port));
   }
   args.push(sshDestination(server), 'bash', '-s');
-  const started = Date.now();
+  const id = ++callSeq;
+  const enqueued = Date.now();
   await sshSemaphore.acquire();
+  const started = Date.now();
   try {
-    log.debug(`[ssh] ${sshDestination(server)} ← ${scriptSummary(script)} (binary)`);
-    const res = await spawnCollect('ssh', args, script, timeoutMs, opts?.signal);
-    log.debug(`[ssh] ${sshDestination(server)} code=${res.code} in ${Date.now() - started}ms`);
+    slog.debug(`#${id} → ${sshDestination(server)} ← ${scriptSummary(script)} (binary)`, { queueMs: started - enqueued || undefined });
+    const res = await spawnCollect('ssh', args, script, timeoutMs, opts?.signal).catch((e) => logSpawnError(id, sshDestination(server), e));
+    logResult(id, sshDestination(server), res, Date.now() - started);
     return res;
   } finally {
     sshSemaphore.release();
@@ -197,17 +217,20 @@ export async function runSsh(server: ServerConfig, extraArgs: string[], timeoutM
     args.push('-p', String(server.port));
   }
   args.push(...extraArgs);
-  const res = await spawnCollect('ssh', args, undefined, timeoutMs);
+  const id = ++callSeq;
+  const started = Date.now();
+  slog.debug(`#${id} → ${sshDestination(server)} (raw)`, { argv: `ssh ${args.join(' ')}` });
+  const res = await spawnCollect('ssh', args, undefined, timeoutMs).catch((e) => logSpawnError(id, sshDestination(server), e));
+  logResult(id, sshDestination(server), res, Date.now() - started);
   return { ...res, stdout: res.stdout.toString('utf8') };
 }
 
 /** Run a bash script on the machine the extension host runs on (= current server). */
 export async function execLocal(script: string, timeoutMs = 60_000): Promise<ExecResult> {
-  const res = await spawnCollect('bash', ['-s'], script, timeoutMs);
+  const id = ++callSeq;
+  const started = Date.now();
+  slog.debug(`#${id} → local ← ${scriptSummary(script)}`, { scriptBytes: script.length });
+  const res = await spawnCollect('bash', ['-s'], script, timeoutMs).catch((e) => logSpawnError(id, 'local', e));
+  logResult(id, 'local', res, Date.now() - started);
   return { ...res, stdout: res.stdout.toString('utf8') };
-}
-
-/** Quote a string for inclusion inside a POSIX single-quoted context. */
-export function shq(value: string): string {
-  return `'${value.replace(/'/g, `'\\''`)}'`;
 }

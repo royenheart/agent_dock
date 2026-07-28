@@ -4,12 +4,13 @@ import { AGENT_LABEL } from '../model';
 import { classifyServers, getCurrentContext, getCurrentDisplayName, getServers, getSessionLimit, getSshTimeoutMs } from '../config';
 import { buildDiscoveryScript } from '../agents/discoveryScript';
 import { parseDiscoveryOutput } from '../agents/parse';
-import { execLocal, shq } from '../ssh/remoteExec';
+import { shq } from '../ssh/remoteExec';
 import { execRemoteSmart } from '../ssh/progress';
-import { isForwardActive } from '../ssh/portForward';
+import { currentWindowId, execCurrent, realpathCurrent } from '../ssh/currentExec';
+import { detectListeningServices, isForwardActive, type ListeningService } from '../ssh/portForward';
 import { joinRemotePath, remoteUri } from '../ssh/remoteFsProvider';
 import { parseLsAp } from '../ssh/remoteFsParse';
-import { isUnder, normPath, pathBasename, realpathSafe } from '../paths';
+import { isUnder, normPath, pathBasename, uriFsPath } from '../paths';
 import { groupByCwd, partitionSessions } from './structure';
 import { t } from '../i18n';
 import { log } from '../log';
@@ -25,7 +26,7 @@ export type Node =
   | { kind: 'fsEntry'; uri: vscode.Uri; name: string; isDir: boolean; parent?: Node }
   | { kind: 'remoteFsEntry'; serverKey: string; path: string; name: string; isDir: boolean; parent?: Node }
   | { kind: 'portsRoot'; serverKey: string }
-  | { kind: 'portForward'; serverKey: string; forward: PortForward; parent?: Node }
+  | { kind: 'portForward'; serverKey: string; forward: PortForward; service?: string; parent?: Node }
   | { kind: 'info'; label: string; severity: 'info' | 'warning' | 'error' | 'loading'; tooltip?: string };
 
 const AGENT_ICON: Record<AgentKind, string> = {
@@ -70,8 +71,13 @@ export class SessionStore {
 
   initPersistence(memento: vscode.Memento): void {
     this.memento = memento;
+    const savedWindowId = memento.get<string>('agentDock.currentWindowId.v1');
     const saved = memento.get<Record<string, { sessions: AgentSession[]; error?: string }>>('agentDock.sessionCache.v1', {});
     for (const [key, entry] of Object.entries(saved)) {
+      // 全局态存于客户端后 __current__ 快照会跨窗口共享，仅当它属于本窗口所属机器时才恢复
+      if (key === CURRENT_SERVER_KEY && savedWindowId !== undefined && savedWindowId !== currentWindowId()) {
+        continue;
+      }
       if (Array.isArray(entry.sessions) && entry.sessions.length > 0) {
         this.cache.set(key, entry.sessions);
         this.stale.add(key);
@@ -81,7 +87,7 @@ export class SessionStore {
       }
     }
     if (this.stale.size > 0) {
-      log.info(`[cache] restored session snapshots for ${this.stale.size} server(s)`);
+      log.child('cache').info(`restored session snapshots for ${this.stale.size} server(s)`);
     }
   }
 
@@ -94,6 +100,7 @@ export class SessionStore {
       out[key] = { sessions: sessions.slice(0, 300), error: this.errors.get(key) };
     }
     await this.memento.update('agentDock.sessionCache.v1', out);
+    await this.memento.update('agentDock.currentWindowId.v1', currentWindowId());
   }
 
   has(key: string): boolean {
@@ -108,7 +115,7 @@ export class SessionStore {
     if (this.inflight.has(key)) {
       return;
     }
-    log.debug(`[cache] revalidating ${key}`);
+    log.child('cache').debug(`revalidating ${key}`);
     this.inflight.set(key, this.fetch(key, server));
   }
 
@@ -136,7 +143,7 @@ export class SessionStore {
             timeoutMs: getSshTimeoutMs(),
             title: t('Scanning sessions on {0}…', server.name),
           })
-        : await execLocal(script, getSshTimeoutMs());
+        : await execCurrent(script, getSshTimeoutMs());
       if (res.cancelled) {
         this.errors.set(key, t('Scan skipped by user'));
         this.cache.set(key, []);
@@ -150,13 +157,14 @@ export class SessionStore {
       const { sessions, notes } = parseDiscoveryOutput(res.stdout);
       if (!server) {
         // 本机会话 cwd 做 realpath 归一，避免与 workspace 路径因符号链接不匹配
-        await Promise.all(
-          sessions.map(async (s) => {
-            if (s.cwd) {
-              s.cwd = await realpathSafe(s.cwd);
-            }
-          }),
-        );
+        const cwds = sessions.map((s) => s.cwd).filter((c): c is string => !!c);
+        const resolved = await realpathCurrent(cwds);
+        let i = 0;
+        for (const s of sessions) {
+          if (s.cwd) {
+            s.cwd = resolved[i++];
+          }
+        }
       }
       this.cache.set(key, sessions);
       void this.persist();
@@ -175,7 +183,7 @@ export class SessionStore {
           .join(', ')}) in ${Date.now() - started}ms`,
       );
     } catch (err) {
-      log.error(`[scan] ${server ? server.name : 'local'} failed: ${String(err)}`);
+      log.child('scan').error(`${server ? server.name : 'local'} failed: ${String(err)}`);
       this.errors.set(key, String(err));
       this.cache.set(key, []);
     } finally {
@@ -221,6 +229,14 @@ export class WorkspaceProvider implements vscode.TreeDataProvider<Node> {
     this.onDidChangeEmitter.fire(node);
   }
 
+  /**
+   * 局部刷新统一入口：只重绘指定服务器的端口子树，不触碰会话/目录缓存。
+   * 新操作需要局部刷新时按此模式加专用方法，不要回退到全量 refresh()。
+   */
+  refreshPorts(serverKey: string): void {
+    this.onDidChangeEmitter.fire({ kind: 'portsRoot', serverKey });
+  }
+
   /** 文件系统变化专用：只重绘树，不触碰会话缓存与远程目录缓存（配合 FileSystemWatcher 实时刷新） */
   refreshFs(): void {
     this.onDidChangeEmitter.fire(undefined);
@@ -228,9 +244,7 @@ export class WorkspaceProvider implements vscode.TreeDataProvider<Node> {
 
   private currentWsPaths(): Promise<string[]> {
     if (!this.wsPathsCache) {
-      this.wsPathsCache = Promise.all(
-        (vscode.workspace.workspaceFolders ?? []).map((f) => realpathSafe(f.uri.fsPath)),
-      );
+      this.wsPathsCache = realpathCurrent((vscode.workspace.workspaceFolders ?? []).map((f) => uriFsPath(f.uri)));
     }
     return this.wsPathsCache;
   }
@@ -327,21 +341,24 @@ export class WorkspaceProvider implements vscode.TreeDataProvider<Node> {
       }
       case 'portForward': {
         const f = node.forward;
+        const target = `${f.remoteHost ?? 'localhost'}:${f.remotePort}`;
+        const local = `localhost:${f.localPort}`;
         const activeNow = isForwardActive(node.serverKey, f);
-        const item = new vscode.TreeItem(
-          `${f.localPort} → ${f.remoteHost ?? 'localhost'}:${f.remotePort}`,
-          vscode.TreeItemCollapsibleState.None,
-        );
+        const item = new vscode.TreeItem(`${target} → ${local}`, vscode.TreeItemCollapsibleState.None);
         item.iconPath = new vscode.ThemeIcon('radio-tower');
         item.contextValue = activeNow ? 'portForward.active' : 'portForward.inactive';
-        item.description = activeNow ? t('forwarding') : undefined;
-        item.tooltip = t(
-          'Forward localhost:{0} to {1}:{2} via {3}',
-          String(f.localPort),
-          f.remoteHost ?? 'localhost',
-          String(f.remotePort),
-          node.serverKey,
-        );
+        item.description = [activeNow ? t('forwarding') : undefined, node.service].filter(Boolean).join(' · ') || undefined;
+        // MarkdownString 走 workbench 富文本 hover，悬停期间持续显示（纯字符串 tooltip 会一闪而过）
+        const md = new vscode.MarkdownString();
+        md.appendMarkdown(`**${target} → ${local}**\n\n`);
+        md.appendMarkdown(`- ${t('Server')}: ${node.serverKey}\n`);
+        md.appendMarkdown(`- ${t('Local address')}: \`${local}\`\n`);
+        md.appendMarkdown(`- ${t('Target')}: \`${target}\` ${t('(via {0})', node.serverKey)}\n`);
+        md.appendMarkdown(`- ${t('Status')}: ${activeNow ? t('forwarding') : t('not started')}\n`);
+        if (node.service) {
+          md.appendMarkdown(`- ${t('Service')}: \`${node.service}\`\n`);
+        }
+        item.tooltip = md;
         return item;
       }
       case 'info': {
@@ -381,13 +398,8 @@ export class WorkspaceProvider implements vscode.TreeDataProvider<Node> {
         return node.isDir ? this.dirChildren(node.uri, node) : [];
       case 'remoteFsEntry':
         return node.isDir ? this.remoteDirChildren(node.serverKey, node.path, node) : [];
-      case 'portsRoot': {
-        const forwards = this.serverConfigFor(node.serverKey)?.forwards ?? [];
-        if (forwards.length === 0) {
-          return [{ kind: 'info', label: t('No port forwards (right-click to add)'), severity: 'info' }];
-        }
-        return forwards.map((forward) => ({ kind: 'portForward', serverKey: node.serverKey, forward, parent: node }));
-      }
+      case 'portsRoot':
+        return this.portsChildren(node);
       default:
         return [];
     }
@@ -480,7 +492,7 @@ export class WorkspaceProvider implements vscode.TreeDataProvider<Node> {
         kind: 'folder',
         serverKey: CURRENT_SERVER_KEY,
         path: wsPaths[i],
-        label: pathBasename(f.uri.fsPath),
+        label: pathBasename(uriFsPath(f.uri)),
         workspaceUri: f.uri,
       });
     });
@@ -495,6 +507,30 @@ export class WorkspaceProvider implements vscode.TreeDataProvider<Node> {
       nodes.push({ kind: 'info', label: t('No workspace folders and no sessions found'), severity: 'info' });
     }
     return nodes;
+  }
+
+  private async portsChildren(node: Extract<Node, { kind: 'portsRoot' }>): Promise<Node[]> {
+    const server = this.serverConfigFor(node.serverKey);
+    const forwards = server?.forwards ?? [];
+    if (forwards.length === 0) {
+      return [{ kind: 'info', label: t('No port forwards (right-click to add)'), severity: 'info' }];
+    }
+    let services = new Map<number, ListeningService>();
+    if (server) {
+      try {
+        services = await detectListeningServices(server);
+      } catch (err) {
+        log.child('forward').debug(`service detection failed on ${server.name}: ${String(err)}`);
+      }
+    }
+    // 目标是其他主机时服务不在本服务器上，无法从 ss 输出识别
+    return forwards.map((forward) => ({
+      kind: 'portForward',
+      serverKey: node.serverKey,
+      forward,
+      service: forward.remoteHost ? undefined : services.get(forward.remotePort)?.name || undefined,
+      parent: node,
+    }));
   }
 
   private async otherSessionsChildren(node: Extract<Node, { kind: 'otherSessions' }>): Promise<Node[]> {
@@ -617,7 +653,7 @@ export class WorkspaceProvider implements vscode.TreeDataProvider<Node> {
         },
       ];
     }
-    log.debug(`[fs] ${server.name}:${path} → ${res.stdout.split('\n').length - 1} entries`);
+    log.child('fs').debug(`${server.name}:${path} → ${res.stdout.split('\n').length - 1} entries`);
     const entries = parseLsAp(res.stdout);
     const dirs: Node[] = [];
     const files: Node[] = [];

@@ -13,6 +13,10 @@
     "Other"
   ],
   "activationEvents": [],
+  "extensionKind": [
+    "ui",
+    "workspace"
+  ],
   "untrustedWorkspaces": {
     "supported": true
   },
@@ -147,7 +151,7 @@
         },
         "agentDock.logLevel": {
           "type": "string",
-          "default": "info",
+          "default": "debug",
           "enum": [
             "debug",
             "info",

@@ -1,6 +1,7 @@
-import * as fs from 'node:fs/promises';
 import * as vscode from 'vscode';
 import { getCurrentDisplayName } from '../config';
+import { currentFileIO, currentFileUri, currentHomeDir, currentNeedsSsh } from '../ssh/currentExec';
+import { uriFsPath } from '../paths';
 import { gatherSettings, type SettingsData } from './settingsData';
 import { t } from '../i18n';
 
@@ -19,11 +20,12 @@ export class SettingsViewProvider implements vscode.WebviewViewProvider {
         await this.push();
       } else if (msg?.type === 'openFile' && typeof msg.path === 'string') {
         try {
-          const stat = await fs.stat(msg.path);
-          if (stat.isDirectory()) {
-            await vscode.commands.executeCommand('revealInExplorer', vscode.Uri.file(msg.path));
+          const uri = currentFileUri(msg.path);
+          const stat = await vscode.workspace.fs.stat(uri);
+          if ((stat.type & vscode.FileType.Directory) !== 0) {
+            await vscode.commands.executeCommand('revealInExplorer', uri);
           } else {
-            await vscode.window.showTextDocument(vscode.Uri.file(msg.path), { preview: true });
+            await vscode.window.showTextDocument(uri, { preview: true });
           }
         } catch {
           vscode.window.showWarningMessage(t('Cannot open: {0}', msg.path));
@@ -38,8 +40,9 @@ export class SettingsViewProvider implements vscode.WebviewViewProvider {
       return;
     }
     const serverLabel = getCurrentDisplayName();
-    const projectDirs = (vscode.workspace.workspaceFolders ?? []).map((f) => f.uri.fsPath);
-    const data = await gatherSettings(serverLabel, undefined, {
+    const projectDirs = (vscode.workspace.workspaceFolders ?? []).map((f) => uriFsPath(f.uri));
+    const homeDir = currentNeedsSsh() ? await currentHomeDir() : undefined;
+    const data = await gatherSettings(serverLabel, homeDir, {
       npmPackage: t('npm package'),
       localPluginFile: t('local plugin file'),
       handlers: (n) => t('{0} handlers', n),
@@ -47,7 +50,7 @@ export class SettingsViewProvider implements vscode.WebviewViewProvider {
       opencodeHooksName: t('opencode hooks are plugin-based'),
       opencodeHooksDetail: t('no standalone hooks config file; events are subscribed inside plugins'),
       noConfigFound: t('No agent configuration found on the current server (MCP / Skills / Plugins / Hooks)'),
-    }, projectDirs);
+    }, projectDirs, currentFileIO());
     this.view.webview.html = this.renderHtml(data);
   }
 

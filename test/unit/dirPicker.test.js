@@ -73,3 +73,16 @@ test('buildBrowseItems: tilde expansion applied before browsing', () => {
   assert.deepEqual(items[1].nav, '/home/u/');
   assert.deepEqual(items[2].nav, '/home/u/x/y/');
 });
+
+test('buildBrowseItems: connection error yields single noOp error item', () => {
+  const items = buildBrowseItems({
+    input: '/a/',
+    homeDir: '/h',
+    subs: ['src'],
+    connError: 'getsockname failed: Not a socket',
+    strings: { ...STRINGS, connFailed: (d) => `unreachable: ${d}` },
+  });
+  assert.equal(items.length, 1);
+  assert.ok(items[0].noOp && items[0].alwaysShow);
+  assert.ok(items[0].label.includes('unreachable: getsockname failed'));
+});

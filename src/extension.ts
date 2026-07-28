@@ -6,11 +6,18 @@ import { SettingsViewProvider } from './views/settingsView';
 import { SessionPanel } from './views/sessionPanel';
 import { registerCommands } from './commands';
 import { ensureCurrentServerRegistered } from './config';
+import { setExtensionKind } from './ssh/currentExec';
 import { log } from './log';
 
 export function activate(context: vscode.ExtensionContext): { provider: WorkspaceProvider; decorations: SessionDecorationProvider } {
   log.init();
-  log.info('Agent Dock activated');
+  setExtensionKind(context.extension.extensionKind);
+  log.info('Agent Dock activated', {
+    version: (context.extension.packageJSON as { version?: string }).version,
+    extensionKind: context.extension.extensionKind === vscode.ExtensionKind.UI ? 'ui' : 'workspace',
+    remote: vscode.env.remoteName ?? 'none',
+    logLevel: vscode.workspace.getConfiguration('agentDock').get<string>('logLevel', 'info'),
+  });
   SessionPanel.init(context.extensionUri);
   const provider = new WorkspaceProvider();
   provider.initPersistence(context.globalState);

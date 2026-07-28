@@ -1,7 +1,8 @@
 import * as vscode from 'vscode';
 import type { SessionStore } from './workspaceProvider';
 import { CURRENT_SERVER_KEY } from './workspaceProvider';
-import { isUnder, realpathSafe } from '../paths';
+import { isUnder, uriFsPath } from '../paths';
+import { realpathCurrent } from '../ssh/currentExec';
 import { t } from '../i18n';
 
 /**
@@ -23,7 +24,7 @@ export class SessionDecorationProvider implements vscode.FileDecorationProvider 
   private realpath(p: string): Promise<string> {
     let cached = this.realpathCache.get(p);
     if (!cached) {
-      cached = realpathSafe(p);
+      cached = realpathCurrent([p]).then(([r]) => r);
       this.realpathCache.set(p, cached);
     }
     return cached;
@@ -34,7 +35,7 @@ export class SessionDecorationProvider implements vscode.FileDecorationProvider 
       return undefined;
     }
     const { sessions } = await this.store.sessionsFor(CURRENT_SERVER_KEY, undefined);
-    const p = await this.realpath(uri.fsPath);
+    const p = await this.realpath(uriFsPath(uri));
     let count = 0;
     for (const s of sessions) {
       if (s.cwd && isUnder(s.cwd, p)) {

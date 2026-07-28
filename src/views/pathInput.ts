@@ -37,10 +37,16 @@ export function buildBrowseItems(opts: {
   input: string;
   homeDir: string;
   subs: string[] | undefined;
-  strings: { open: (p: string) => string; notExist: (p: string) => string };
+  /** ssh/读取失败（区别于目录不存在）：展示连接错误项，其余项不再渲染。 */
+  connError?: string;
+  strings: { open: (p: string) => string; notExist: (p: string) => string; connFailed?: (detail: string) => string };
   extraActionLabel?: string;
 }): BrowseItemSpec[] {
   const { input, homeDir, subs, strings, extraActionLabel } = opts;
+  if (opts.connError !== undefined) {
+    const label = strings.connFailed?.(opts.connError) ?? opts.connError;
+    return [{ label: `$(error) ${label}`, noOp: true, alwaysShow: true }];
+  }
   const expanded = expandTilde(input, homeDir);
   const { base, segment } = splitPathInput(expanded);
   if (subs === undefined) {

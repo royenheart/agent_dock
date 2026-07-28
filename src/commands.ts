@@ -17,10 +17,12 @@ import { resumeCommand } from './agents/resume';
 import { buildDiscoveryScript } from './agents/discoveryScript';
 import { parseDiscoveryOutput } from './agents/parse';
 import { execRemote, sshDestination, shq } from './ssh/remoteExec';
+import { buildListDirsScript } from './ssh/sshArgs';
+import { currentFileUri, currentHomeDir, currentNeedsSsh, currentServerConfig } from './ssh/currentExec';
 import { forwardSpec, setOnDidChange, startForward, stopForward } from './ssh/portForward';
 import { readSshConfigHosts, type SshHostEntry } from './ssh/sshConfig';
-import { pathBasename } from './paths';
-import { pickDirectory } from './views/dirPicker';
+import { pathBasename, uriFsPath } from './paths';
+import { pickDirectory, type SubdirsResult } from './views/dirPicker';
 import { SessionPanel, type SessionTarget } from './views/sessionPanel';
 import type { Node, WorkspaceProvider } from './tree/workspaceProvider';
 import { CURRENT_SERVER_KEY } from './tree/workspaceProvider';
@@ -109,10 +111,10 @@ async function connectToServer(server: ServerConfig): Promise<void> {
       if (res.code === 0) {
         openPath = wsFile;
       } else {
-        log.warn(`[connect] workspace file write failed on ${server.name}: ${res.stderr.slice(0, 200)}`);
+        log.child('connect').warn(`workspace file write failed on ${server.name}: ${res.stderr.slice(0, 200)}`);
       }
     } catch (err) {
-      log.warn(`[connect] workspace file write failed on ${server.name}: ${String(err)}`);
+      log.child('connect').warn(`workspace file write failed on ${server.name}: ${String(err)}`);
     }
   }
   const uri = vscode.Uri.from({ scheme: 'vscode-remote', authority, path: openPath });
@@ -234,25 +236,27 @@ async function ensureServerSaved(entry: SshHostEntry): Promise<ServerConfig> {
   return server;
 }
 
-async function localListSubdirs(path: string): Promise<string[] | undefined> {
+async function localListSubdirs(path: string): Promise<SubdirsResult> {
   try {
     const entries = await fsp.readdir(path, { withFileTypes: true });
-    return entries.filter((e) => e.isDirectory()).map((e) => e.name);
+    return { kind: 'ok', dirs: entries.filter((e) => e.isDirectory()).map((e) => e.name) };
   } catch {
-    return undefined;
+    return { kind: 'missing' };
   }
 }
 
-function remoteListSubdirs(server: ServerConfig): (path: string) => Promise<string[] | undefined> {
+const NOENT_MARKER = '__AGENTDOCK_NOENT_7f3a9__';
+
+function remoteListSubdirs(server: ServerConfig): (path: string) => Promise<SubdirsResult> {
   return async (path: string) => {
-    const res = await execRemote(server, `ls -1Ap ${shq(path)} 2>/dev/null | grep '/$' | sed 's|/$||'`, 15_000);
-    if (res.code !== 0 && !res.stdout.trim()) {
-      return undefined;
+    const res = await execRemote(server, buildListDirsScript(path, NOENT_MARKER), 15_000);
+    if (res.code !== 0) {
+      return { kind: 'conn', detail: res.stderr.trim().slice(0, 120) || (res.timedOut ? 'timeout' : `exit ${res.code}`) };
     }
-    return res.stdout
-      .split('\n')
-      .map((s) => s.trim())
-      .filter(Boolean);
+    if (res.stdout.includes(NOENT_MARKER)) {
+      return { kind: 'missing' };
+    }
+    return { kind: 'ok', dirs: res.stdout.split('\n').map((s) => s.trim()).filter(Boolean) };
   };
 }
 
@@ -294,7 +298,8 @@ async function addRemoteDirectory(server: ServerConfig, _provider: WorkspaceProv
 
 async function addOtherServerFlow(provider: WorkspaceProvider): Promise<void> {
   const ctx = getCurrentContext();
-  const picked = await pickOtherServer(ctx.isLocal, ctx.sshHost);
+  // UI 侧运行时 ssh 配置读的是客户端的，占位提示需一致
+  const picked = await pickOtherServer(ctx.isLocal || currentNeedsSsh(), ctx.sshHost);
   if (!picked) {
     return;
   }
@@ -308,7 +313,7 @@ async function addOtherServerFlow(provider: WorkspaceProvider): Promise<void> {
 
 async function addLocalDirectoryFlow(provider: WorkspaceProvider): Promise<void> {
   const { sessions } = await provider.store.sessionsFor(CURRENT_SERVER_KEY, undefined);
-  const wsPaths = (vscode.workspace.workspaceFolders ?? []).map((f) => f.uri.fsPath);
+  const wsPaths = (vscode.workspace.workspaceFolders ?? []).map((f) => uriFsPath(f.uri));
   const seen = new Set<string>();
   const cwds: string[] = [];
   for (const s of sessions) {
@@ -323,11 +328,13 @@ async function addLocalDirectoryFlow(provider: WorkspaceProvider): Promise<void>
   }
   cwds.sort();
 
+  const needsSsh = currentNeedsSsh();
+  const currentServer = needsSsh ? currentServerConfig() : undefined;
   const result = await pickDirectory({
     title: t('Add directory (current server)'),
     sessionDirs: cwds,
-    listSubdirs: localListSubdirs,
-    homeDir: os.homedir(),
+    listSubdirs: currentServer ? remoteListSubdirs(currentServer) : localListSubdirs,
+    homeDir: needsSsh ? await currentHomeDir() : os.homedir(),
     extraAction: { label: `$(plug) ${t('Connect to another server…')}` },
   });
   if (!result) {
@@ -338,7 +345,7 @@ async function addLocalDirectoryFlow(provider: WorkspaceProvider): Promise<void>
     return;
   }
   const ok = vscode.workspace.updateWorkspaceFolders(vscode.workspace.workspaceFolders?.length ?? 0, 0, {
-    uri: vscode.Uri.file(result.path),
+    uri: currentFileUri(result.path),
   });
   if (ok) {
     provider.refresh();
@@ -376,7 +383,7 @@ export function registerCommands(context: vscode.ExtensionContext, provider: Wor
     context.subscriptions.push(vscode.commands.registerCommand(id, fn));
   };
 
-  setOnDidChange(() => provider.refreshFs());
+  setOnDidChange((serverName) => provider.refreshPorts(serverName));
 
   reg('agentDock.refresh', async () => {
     await ensureCurrentServerRegistered();
@@ -618,7 +625,7 @@ export function registerCommands(context: vscode.ExtensionContext, provider: Wor
       return;
     }
     await updateServerForwards(server.name, [...forwards, forward]);
-    provider.refresh();
+    provider.refreshPorts(server.name);
   });
 
   reg('agentDock.portForwardStart', async (node: PortForwardNode) => {
@@ -658,7 +665,7 @@ export function registerCommands(context: vscode.ExtensionContext, provider: Wor
     await stopForward(server, node.forward);
     const spec = forwardSpec(node.forward);
     await updateServerForwards(server.name, (server.forwards ?? []).filter((f) => forwardSpec(f) !== spec));
-    provider.refresh();
+    provider.refreshPorts(server.name);
   });
 
   reg('agentDock.openSettings', async () => {

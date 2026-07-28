@@ -78,6 +78,7 @@
   "Type a path to browse its subdirectories": "输入路径以浏览其子目录",
   "Open {0}": "打开 {0}",
   "Directory does not exist: {0}": "目录不存在: {0}",
+  "Cannot reach server: {0}": "无法连接服务器: {0}",
   "Filter…": "筛选…",
   "Path copied": "已复制路径",
   "Relative path copied": "已复制相对路径",
@@ -116,5 +117,12 @@
   "Format: localPort:remotePort or localPort:remoteHost:remotePort": "格式：localPort:remotePort 或 localPort:remoteHost:remotePort",
   "This forward already exists": "该转发已存在",
   "Forwarding localhost:{0} to {1}:{2} via {3}": "正在转发 localhost:{0} →（经 {3}）→ {1}:{2}",
-  "Failed to start forwarding: {0}": "启动转发失败: {0}"
+  "Failed to start forwarding: {0}": "启动转发失败: {0}",
+  "Server": "服务器",
+  "Local address": "本地地址",
+  "Target": "目标",
+  "(via {0})": "（经 {0}）",
+  "Status": "状态",
+  "not started": "未启动",
+  "Service": "服务"
 }

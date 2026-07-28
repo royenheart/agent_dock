@@ -3,6 +3,24 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 import type { AgentKind } from '../model';
 
+/** 文件读取抽象：本地窗口用 node fs；UI 侧远程窗口注入 vscode.fs 代理（路径拼接随之切 posix）。 */
+export interface FileIO {
+  readFile(p: string): Promise<string>;
+  readdir(p: string): Promise<{ name: string; isDir: boolean; isFile: boolean }[]>;
+  join(...parts: string[]): string;
+}
+
+export const nodeFileIO: FileIO = {
+  readFile: async (p) => await fs.readFile(p, 'utf8'),
+  readdir: async (p) =>
+    (await fs.readdir(p, { withFileTypes: true })).map((e) => ({
+      name: e.name,
+      isDir: e.isDirectory(),
+      isFile: e.isFile(),
+    })),
+  join: (...parts) => path.join(...parts),
+};
+
 export interface SettingsItem {
   name: string;
   detail?: string;
@@ -49,28 +67,28 @@ function emptyBucket(): AgentBucket {
   return { mcps: [], skills: [], plugins: [], hooks: [] };
 }
 
-async function readJson(file: string): Promise<Record<string, unknown> | undefined> {
+async function readJson(io: FileIO, file: string): Promise<Record<string, unknown> | undefined> {
   try {
-    const raw = await fs.readFile(file, 'utf8');
+    const raw = await io.readFile(file);
     return JSON.parse(raw) as Record<string, unknown>;
   } catch {
     return undefined;
   }
 }
 
-async function listDirs(dir: string): Promise<string[]> {
+async function listDirs(io: FileIO, dir: string): Promise<string[]> {
   try {
-    const entries = await fs.readdir(dir, { withFileTypes: true });
-    return entries.filter((e) => e.isDirectory()).map((e) => e.name);
+    const entries = await io.readdir(dir);
+    return entries.filter((e) => e.isDir).map((e) => e.name);
   } catch {
     return [];
   }
 }
 
-async function listFiles(dir: string, exts: string[]): Promise<string[]> {
+async function listFiles(io: FileIO, dir: string, exts: string[]): Promise<string[]> {
   try {
-    const entries = await fs.readdir(dir, { withFileTypes: true });
-    return entries.filter((e) => e.isFile() && exts.some((x) => e.name.endsWith(x))).map((e) => e.name);
+    const entries = await io.readdir(dir);
+    return entries.filter((e) => e.isFile && exts.some((x) => e.name.endsWith(x))).map((e) => e.name);
   } catch {
     return [];
   }
@@ -131,12 +149,12 @@ const PROJECT_SKILL_ROOTS: { rel: string; agents: AgentKind[] }[] = [
   { rel: '.agents/skills', agents: ['claude', 'opencode', 'codex'] },
 ];
 
-async function gatherSkillsFrom(dir: string, agents: AgentKind[], out: Map<string, { item: SettingsItem; paths: string[] }>): Promise<void> {
-  for (const name of await listDirs(dir)) {
-    const skillMd = path.join(dir, name, 'SKILL.md');
+async function gatherSkillsFrom(io: FileIO, dir: string, agents: AgentKind[], out: Map<string, { item: SettingsItem; paths: string[] }>): Promise<void> {
+  for (const name of await listDirs(io, dir)) {
+    const skillMd = io.join(dir, name, 'SKILL.md');
     let detail: string | undefined;
     try {
-      const raw = await fs.readFile(skillMd, 'utf8');
+      const raw = await io.readFile(skillMd);
       const fm = /^---\r?\n([\s\S]*?)\r?\n---/.exec(raw);
       if (fm) {
         detail = /^description:\s*(.+)$/m.exec(fm[1])?.[1]?.trim().slice(0, 100);
@@ -156,14 +174,14 @@ async function gatherSkillsFrom(dir: string, agents: AgentKind[], out: Map<strin
   }
 }
 
-async function gatherSkills(home: string, strings: SettingsStrings, projectDirs: string[]): Promise<SettingsItem[]> {
+async function gatherSkills(io: FileIO, home: string, strings: SettingsStrings, projectDirs: string[]): Promise<SettingsItem[]> {
   const byAgentAndName = new Map<string, { item: SettingsItem; paths: string[] }>();
   for (const root of SKILL_ROOTS) {
-    await gatherSkillsFrom(path.join(home, root.rel), root.agents, byAgentAndName);
+    await gatherSkillsFrom(io, io.join(home, root.rel), root.agents, byAgentAndName);
   }
   for (const proj of projectDirs) {
     for (const root of PROJECT_SKILL_ROOTS) {
-      await gatherSkillsFrom(path.join(proj, root.rel), root.agents, byAgentAndName);
+      await gatherSkillsFrom(io, io.join(proj, root.rel), root.agents, byAgentAndName);
     }
   }
   const out: SettingsItem[] = [];
@@ -182,6 +200,7 @@ export async function gatherSettings(
   homeDir?: string,
   strings: SettingsStrings = DEFAULT_SETTINGS_STRINGS,
   projectDirs: string[] = [],
+  io: FileIO = nodeFileIO,
 ): Promise<SettingsData> {
   const home = homeDir ?? os.homedir();
   const byAgent: Record<AgentKind, AgentBucket> = {
@@ -192,8 +211,8 @@ export async function gatherSettings(
   const data: SettingsData = { serverLabel, byAgent, notes: [] };
 
   // ---- claude code ----
-  const claudeJsonPath = path.join(home, '.claude.json');
-  const claudeJson = await readJson(claudeJsonPath);
+  const claudeJsonPath = io.join(home, '.claude.json');
+  const claudeJson = await readJson(io, claudeJsonPath);
   for (const [name, cfg] of Object.entries((claudeJson?.mcpServers ?? {}) as Record<string, unknown>)) {
     const c = cfg as Record<string, unknown>;
     byAgent.claude.mcps.push({
@@ -217,8 +236,8 @@ export async function gatherSettings(
       });
     }
   }
-  const claudeSettingsPath = path.join(home, '.claude', 'settings.json');
-  const claudeSettings = await readJson(claudeSettingsPath);
+  const claudeSettingsPath = io.join(home, '.claude', 'settings.json');
+  const claudeSettings = await readJson(io, claudeSettingsPath);
   const enabledPlugins = (claudeSettings?.enabledPlugins ?? {}) as Record<string, unknown>;
   for (const [name, on] of Object.entries(enabledPlugins)) {
     if (on) {
@@ -237,10 +256,10 @@ export async function gatherSettings(
   }
 
   // ---- codex ----
-  const codexTomlPath = path.join(home, '.codex', 'config.toml');
+  const codexTomlPath = io.join(home, '.codex', 'config.toml');
   let codexToml = '';
   try {
-    codexToml = await fs.readFile(codexTomlPath, 'utf8');
+    codexToml = await io.readFile(codexTomlPath);
   } catch {
     codexToml = '';
   }
@@ -255,8 +274,8 @@ export async function gatherSettings(
       byAgent.codex.hooks.push({ name: 'config.toml [hooks]', agent: 'codex', sourcePath: codexTomlPath });
     }
   }
-  const codexHooksPath = path.join(home, '.codex', 'hooks.json');
-  const codexHooks = await readJson(codexHooksPath);
+  const codexHooksPath = io.join(home, '.codex', 'hooks.json');
+  const codexHooks = await readJson(io, codexHooksPath);
   if (codexHooks) {
     for (const name of Object.keys(codexHooks)) {
       byAgent.codex.hooks.push({ name, agent: 'codex', sourcePath: codexHooksPath });
@@ -264,9 +283,9 @@ export async function gatherSettings(
   }
 
   // ---- opencode ----
-  const ocConfigDir = path.join(home, '.config', 'opencode');
-  const ocJsonPath = path.join(ocConfigDir, 'opencode.json');
-  const ocJson = (await readJson(ocJsonPath)) ?? (await readJson(path.join(ocConfigDir, 'config.json')));
+  const ocConfigDir = io.join(home, '.config', 'opencode');
+  const ocJsonPath = io.join(ocConfigDir, 'opencode.json');
+  const ocJson = (await readJson(io, ocJsonPath)) ?? (await readJson(io, io.join(ocConfigDir, 'config.json')));
   for (const [name, cfg] of Object.entries((ocJson?.mcp ?? {}) as Record<string, unknown>)) {
     const c = cfg as Record<string, unknown>;
     const cmd = Array.isArray(c.command) ? (c.command as unknown[]).join(' ') : brief(c.url);
@@ -276,13 +295,13 @@ export async function gatherSettings(
   for (const p of ocPluginList) {
     byAgent.opencode.plugins.push({ name: String(p), detail: strings.npmPackage, agent: 'opencode', sourcePath: ocJsonPath });
   }
-  const ocPluginFiles = await listFiles(path.join(ocConfigDir, 'plugins'), ['.js', '.ts']);
+  const ocPluginFiles = await listFiles(io, io.join(ocConfigDir, 'plugins'), ['.js', '.ts']);
   for (const file of ocPluginFiles) {
     byAgent.opencode.plugins.push({
       name: file,
       detail: strings.localPluginFile,
       agent: 'opencode',
-      sourcePath: path.join(ocConfigDir, 'plugins', file),
+      sourcePath: io.join(ocConfigDir, 'plugins', file),
     });
   }
   if (ocPluginList.length > 0 || ocPluginFiles.length > 0) {
@@ -298,17 +317,17 @@ export async function gatherSettings(
   for (const proj of projectDirs) {
     const projName = path.basename(proj) || proj;
     const prefix = `[${projName}]`;
-    const projMcpJson = await readJson(path.join(proj, '.mcp.json'));
+    const projMcpJson = await readJson(io, io.join(proj, '.mcp.json'));
     for (const [name, cfg] of Object.entries((projMcpJson?.mcpServers ?? {}) as Record<string, unknown>)) {
       const c = cfg as Record<string, unknown>;
       byAgent.claude.mcps.push({
         name,
         detail: `${prefix} ${brief(c.command) ?? brief(c.url) ?? ''}`.trim(),
         agent: 'claude',
-        sourcePath: path.join(proj, '.mcp.json'),
+        sourcePath: io.join(proj, '.mcp.json'),
       });
     }
-    const projClaudeSettings = await readJson(path.join(proj, '.claude', 'settings.json'));
+    const projClaudeSettings = await readJson(io, io.join(proj, '.claude', 'settings.json'));
     const projHooks = (projClaudeSettings?.hooks ?? {}) as Record<string, unknown>;
     for (const [event, handlers] of Object.entries(projHooks)) {
       const count = Array.isArray(handlers) ? handlers.length : 1;
@@ -316,16 +335,16 @@ export async function gatherSettings(
         name: event,
         detail: `${prefix} ${strings.handlers(count)}`,
         agent: 'claude',
-        sourcePath: path.join(proj, '.claude', 'settings.json'),
+        sourcePath: io.join(proj, '.claude', 'settings.json'),
       });
     }
     const projEnabledPlugins = (projClaudeSettings?.enabledPlugins ?? {}) as Record<string, unknown>;
     for (const [name, on] of Object.entries(projEnabledPlugins)) {
       if (on) {
-        byAgent.claude.plugins.push({ name, detail: prefix, agent: 'claude', sourcePath: path.join(proj, '.claude', 'settings.json') });
+        byAgent.claude.plugins.push({ name, detail: prefix, agent: 'claude', sourcePath: io.join(proj, '.claude', 'settings.json') });
       }
     }
-    const projOcJson = await readJson(path.join(proj, 'opencode.json'));
+    const projOcJson = await readJson(io, io.join(proj, 'opencode.json'));
     for (const [name, cfg] of Object.entries((projOcJson?.mcp ?? {}) as Record<string, unknown>)) {
       const c = cfg as Record<string, unknown>;
       const cmd = Array.isArray(c.command) ? (c.command as unknown[]).join(' ') : brief(c.url);
@@ -333,34 +352,34 @@ export async function gatherSettings(
         name,
         detail: `${prefix} ${cmd ?? brief(c.type) ?? ''}`.trim(),
         agent: 'opencode',
-        sourcePath: path.join(proj, 'opencode.json'),
+        sourcePath: io.join(proj, 'opencode.json'),
       });
     }
     const projOcPlugins = Array.isArray(projOcJson?.plugin) ? (projOcJson.plugin as unknown[]) : [];
     for (const p of projOcPlugins) {
-      byAgent.opencode.plugins.push({ name: String(p), detail: `${prefix} ${strings.npmPackage}`, agent: 'opencode', sourcePath: path.join(proj, 'opencode.json') });
+      byAgent.opencode.plugins.push({ name: String(p), detail: `${prefix} ${strings.npmPackage}`, agent: 'opencode', sourcePath: io.join(proj, 'opencode.json') });
     }
     let projCodexToml = '';
     try {
-      projCodexToml = await fs.readFile(path.join(proj, '.codex', 'config.toml'), 'utf8');
+      projCodexToml = await io.readFile(io.join(proj, '.codex', 'config.toml'));
     } catch {
       projCodexToml = '';
     }
     if (projCodexToml) {
       for (const s of parseTomlSections(projCodexToml, 'mcp_servers')) {
-        byAgent.codex.mcps.push({ name: s.name, detail: `${prefix} ${tomlBodyDetail(s.body) ?? ''}`.trim(), agent: 'codex', sourcePath: path.join(proj, '.codex', 'config.toml') });
+        byAgent.codex.mcps.push({ name: s.name, detail: `${prefix} ${tomlBodyDetail(s.body) ?? ''}`.trim(), agent: 'codex', sourcePath: io.join(proj, '.codex', 'config.toml') });
       }
       for (const s of parseTomlSections(projCodexToml, 'plugins')) {
-        byAgent.codex.plugins.push({ name: s.name, detail: prefix, agent: 'codex', sourcePath: path.join(proj, '.codex', 'config.toml') });
+        byAgent.codex.plugins.push({ name: s.name, detail: prefix, agent: 'codex', sourcePath: io.join(proj, '.codex', 'config.toml') });
       }
       if (/^\[hooks\]/m.test(projCodexToml)) {
-        byAgent.codex.hooks.push({ name: 'config.toml [hooks]', detail: prefix, agent: 'codex', sourcePath: path.join(proj, '.codex', 'config.toml') });
+        byAgent.codex.hooks.push({ name: 'config.toml [hooks]', detail: prefix, agent: 'codex', sourcePath: io.join(proj, '.codex', 'config.toml') });
       }
     }
   }
 
   // ---- skills（跨位置去重，按 agent 分行）----
-  for (const item of await gatherSkills(home, strings, projectDirs)) {
+  for (const item of await gatherSkills(io, home, strings, projectDirs)) {
     byAgent[item.agent].skills.push(item);
   }
 

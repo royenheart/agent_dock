@@ -3,7 +3,8 @@ import type { AgentSession, RenderBlock, ServerConfig } from '../model';
 import { AGENT_LABEL } from '../model';
 import { buildTranscriptScript } from '../agents/discoveryScript';
 import { formatTokens, renderTranscript, type TranscriptSummary } from '../agents/transcript';
-import { execLocal, execRemote } from '../ssh/remoteExec';
+import { execRemote } from '../ssh/remoteExec';
+import { execCurrent } from '../ssh/currentExec';
 import { t } from '../i18n';
 
 export interface SessionTarget {
@@ -53,7 +54,7 @@ export class SessionPanel {
       panel.webview.html = renderPage(panel.webview, target, undefined, t('Loading session…'));
       try {
         const script = buildTranscriptScript(target.session);
-        const res = target.server ? await execRemote(target.server, script) : await execLocal(script);
+        const res = target.server ? await execRemote(target.server, script) : await execCurrent(script);
         if (res.timedOut) {
           panel.webview.html = renderPage(panel.webview, target, undefined, t('Timed out while fetching the session'));
           return;
