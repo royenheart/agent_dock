@@ -1,3 +1,9 @@
+## v0.1.7 (2026-07-28)
+
+### Fix
+
+- port forwarding on selected server & settings sync across servers
+
 ## v0.1.6 (2026-07-26)
 
 ### Feat
