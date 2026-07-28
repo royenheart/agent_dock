@@ -19,6 +19,7 @@ import { parseDiscoveryOutput } from './agents/parse';
 import { execRemote, sshDestination, shq } from './ssh/remoteExec';
 import { buildListDirsScript } from './ssh/sshArgs';
 import { currentFileUri, currentHomeDir, currentNeedsSsh, currentServerConfig } from './ssh/currentExec';
+import { openClientTerminal, sshSpawnSpec } from './ssh/clientTerminal';
 import { forwardSpec, setOnDidChange, startForward, stopForward } from './ssh/portForward';
 import { readSshConfigHosts, type SshHostEntry } from './ssh/sshConfig';
 import { pathBasename, uriFsPath } from './paths';
@@ -71,16 +72,21 @@ function sessionTarget(node: SessionNode): SessionTarget | undefined {
 export function resumeInTerminal(target: SessionTarget): void {
   const { session, server } = target;
   const cmd = resumeCommand(session);
-  const term = vscode.window.createTerminal({
-    name: `${session.agent}: ${session.title.slice(0, 20)}`,
-  });
+  const name = `${session.agent}: ${session.title.slice(0, 20)}`;
   const full = session.cwd ? `cd ${shq(session.cwd)} && ${cmd}` : cmd;
   if (server) {
+    if (currentNeedsSsh()) {
+      openClientTerminal({ name, spec: sshSpawnSpec(server, full) });
+      return;
+    }
     const port = server.port ? `-p ${server.port} ` : '';
+    const term = vscode.window.createTerminal({ name });
     term.sendText(`ssh -t ${port}${sshDestination(server)} ${shq(full)}`);
-  } else {
-    term.sendText(full);
+    term.show();
+    return;
   }
+  const term = vscode.window.createTerminal({ name });
+  term.sendText(full);
   term.show();
 }
 
@@ -260,7 +266,7 @@ function remoteListSubdirs(server: ServerConfig): (path: string) => Promise<Subd
   };
 }
 
-async function addRemoteDirectory(server: ServerConfig, _provider: WorkspaceProvider): Promise<void> {
+async function addRemoteDirectory(server: ServerConfig, provider: WorkspaceProvider): Promise<void> {
   const probe = await vscode.window.withProgress(
     { location: vscode.ProgressLocation.Notification, title: t('Scanning {0}…', server.host) },
     async () => {
@@ -288,8 +294,14 @@ async function addRemoteDirectory(server: ServerConfig, _provider: WorkspaceProv
     sessionDirs: probe.cwds,
     listSubdirs: remoteListSubdirs(server),
     homeDir: probe.home,
+    // ssh 配置始终解析自客户端，任何服务器的添加目录流程都能转去「连接至其他服务器」
+    extraAction: { label: `$(plug) ${t('Connect to another server…')}` },
   });
-  if (!result || result.kind !== 'dir') {
+  if (!result) {
+    return;
+  }
+  if (result.kind === 'action') {
+    await addOtherServerFlow(provider);
     return;
   }
   await addServerFolders(server.name, [result.path]);
@@ -416,10 +428,23 @@ export function registerCommands(context: vscode.ExtensionContext, provider: Wor
     if (!node?.server) {
       return;
     }
+    if (currentNeedsSsh()) {
+      openClientTerminal({ name: `ssh: ${node.server.name}`, spec: sshSpawnSpec(node.server) });
+      return;
+    }
     const term = vscode.window.createTerminal({ name: `ssh: ${node.server.name}` });
     const port = node.server.port ? `-p ${node.server.port} ` : '';
     term.sendText(`ssh ${port}${sshDestination(node.server)}`);
     term.show();
+  });
+
+  reg('agentDock.openClientTerminal', () => {
+    if (currentNeedsSsh()) {
+      openClientTerminal({ name: t('Client Terminal') });
+    } else {
+      // 本地窗口的原生终端本身就是客户端终端，走原生 profile 体验更好
+      vscode.window.createTerminal({ name: t('Client Terminal') }).show();
+    }
   });
 
   reg('agentDock.openSession', async (node: SessionNode) => {
@@ -565,8 +590,13 @@ export function registerCommands(context: vscode.ExtensionContext, provider: Wor
       if (!server) {
         return;
       }
+      const name = `new: ${picked} · ${pathBasename(node.path)}`;
+      if (currentNeedsSsh()) {
+        openClientTerminal({ name, spec: sshSpawnSpec(server, `cd ${shq(node.path)} && ${cli}`) });
+        return;
+      }
       const port = server.port ? `-p ${server.port} ` : '';
-      const term = vscode.window.createTerminal({ name: `new: ${picked} · ${pathBasename(node.path)}` });
+      const term = vscode.window.createTerminal({ name });
       term.sendText(`ssh -t ${port}${sshDestination(server)} ${shq(`cd ${shq(node.path)} && ${cli}`)}`);
       term.show();
     } else {

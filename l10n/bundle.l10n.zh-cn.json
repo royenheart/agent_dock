@@ -124,5 +124,8 @@
   "(via {0})": "（经 {0}）",
   "Status": "状态",
   "not started": "未启动",
-  "Service": "服务"
+  "Service": "服务",
+  "Client Terminal": "客户端终端",
+  "Process exited with code {0} — press any key to close": "进程已退出（代码 {0}）——按任意键关闭",
+  "Failed to start client process: {0}": "无法启动客户端进程: {0}"
 }

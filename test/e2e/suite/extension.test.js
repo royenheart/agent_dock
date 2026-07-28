@@ -1,9 +1,11 @@
 const assert = require('node:assert/strict');
+const fs = require('node:fs');
 const vscode = require('vscode');
 const { buildTranscriptScript } = require('../../../out/agents/discoveryScript');
 const { renderTranscript } = require('../../../out/agents/transcript');
 const { execLocal } = require('../../../out/ssh/remoteExec');
 const { readSshConfigHosts } = require('../../../out/ssh/sshConfig');
+const { clientTerminalOptions } = require('../../../out/ssh/clientTerminal');
 
 suite('agent-workspace e2e', () => {
   let api;
@@ -109,6 +111,37 @@ suite('agent-workspace e2e', () => {
     const term = vscode.window.terminals.find((t2) => t2.name.includes('codex'));
     assert.ok(term, `terminal for codex created, have: ${vscode.window.terminals.map((t2) => t2.name).join(',')}`);
     term.dispose();
+  });
+
+  async function runClientTermCommand(outFile) {
+    fs.rmSync(outFile, { force: true });
+    const term = vscode.window.createTerminal(clientTerminalOptions('Client Terminal'));
+    term.show();
+    await new Promise((r) => setTimeout(r, 1500));
+    // 'echox' + 退格 → 'echo'：行编辑在两种后端（node-pty 原生 / 管道行缓冲）下都应成立
+    term.sendText(`echox\x7f AGENTWS_CLIENT_TERM_OK > ${outFile}`);
+    let content = '';
+    for (let i = 0; i < 20 && !content; i++) {
+      await new Promise((r) => setTimeout(r, 500));
+      if (fs.existsSync(outFile)) {
+        content = fs.readFileSync(outFile, 'utf8').trim();
+      }
+    }
+    term.dispose();
+    return content;
+  }
+
+  test('client terminal pty executes commands in a client-side shell', async () => {
+    assert.equal(await runClientTermCommand('/tmp/agentws-e2e/client-term-out.txt'), 'AGENTWS_CLIENT_TERM_OK');
+  });
+
+  test('client terminal pipe fallback executes commands (node-pty disabled)', async () => {
+    process.env.AGENTDOCK_NO_NODE_PTY = '1';
+    try {
+      assert.equal(await runClientTermCommand('/tmp/agentws-e2e/client-term-out-pipe.txt'), 'AGENTWS_CLIENT_TERM_OK');
+    } finally {
+      delete process.env.AGENTDOCK_NO_NODE_PTY;
+    }
   });
 
   test('file node commands: copy path, new file, rename', async () => {

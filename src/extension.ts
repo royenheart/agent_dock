@@ -7,6 +7,8 @@ import { SessionPanel } from './views/sessionPanel';
 import { registerCommands } from './commands';
 import { ensureCurrentServerRegistered } from './config';
 import { setExtensionKind } from './ssh/currentExec';
+import { clientTerminalOptions } from './ssh/clientTerminal';
+import { t } from './i18n';
 import { log } from './log';
 
 export function activate(context: vscode.ExtensionContext): { provider: WorkspaceProvider; decorations: SessionDecorationProvider } {
@@ -48,6 +50,10 @@ export function activate(context: vscode.ExtensionContext): { provider: Workspac
     }),
     vscode.window.registerWebviewViewProvider(SettingsViewProvider.viewType, settings, {
       webviewOptions: { retainContextWhenHidden: true },
+    }),
+    // 「客户端终端」出现在终端面板 + 下拉：pty 跑在 UI 侧扩展宿主，即客户端机器
+    vscode.window.registerTerminalProfileProvider('agentDock.clientTerminal', {
+      provideTerminalProfile: () => new vscode.TerminalProfile(clientTerminalOptions(t('Client Terminal'))),
     }),
   );
 

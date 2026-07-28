@@ -11,6 +11,7 @@
   "cmd.removeServer": "Remove Server",
   "cmd.connect": "Connect to This Server",
   "cmd.connectTerminal": "Open SSH Terminal",
+  "cmd.openClientTerminal": "Open Client Terminal",
   "cmd.openSession": "Open Transcript",
   "cmd.resumeSession": "Resume in Terminal",
   "cmd.copySessionId": "Copy Session ID",

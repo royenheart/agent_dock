@@ -11,6 +11,7 @@
   "cmd.removeServer": "移除服务器",
   "cmd.connect": "连接到此服务器",
   "cmd.connectTerminal": "打开 SSH 终端",
+  "cmd.openClientTerminal": "打开客户端终端",
   "cmd.openSession": "查看对话记录",
   "cmd.resumeSession": "在终端中继续会话",
   "cmd.copySessionId": "复制会话 ID",
