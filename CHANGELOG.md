@@ -1,5 +1,19 @@
 ## v0.1.10 (2026-08-03)
 
+### Fix
+
+- ssh exec robustness: EPIPE error listeners (remoteExec + client terminal), stdout byte cap (16 MiB, truncated marker), queued-acquire cancellation via AbortSignal, SIGTERM-before-SIGKILL to protect the shared ControlMaster connection, runSsh under the global concurrency limit
+- poll parsing: paths containing `|`, entries named `S|x`/`D|x`/`E|x`/`M|x`, and deleted dirs → null snapshot (right-to-left field split + explicit E|/M| block markers)
+- parseLsAp aligned with `ls -1Ap`: names ending in `* @ = | %` kept intact
+- readFile: single-call bounded read (no TOCTOU, TOOBIG marker, bounded memory)
+- expanded-dir polling: LRU cap (1000) instead of silent 30-minute stop; per-server concurrent polling
+- session tree built recursively: nesting depth ≥ 2 no longer lost
+- refreshPorts falls back to full re-render instead of a silent no-op
+- memento persistence serialized, skipped when unchanged, per-dir node cap, failures logged
+- file decorations: no session scan when cache empty; realpath cache kept across refreshes
+- servers config read-modify-write serialized; removeServer stops active forwards first
+- log level default `info` + invalid-value fallback
+
 ## v0.1.9 (2026-08-03)
 
 ### Feat
