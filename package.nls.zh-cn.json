@@ -35,5 +35,9 @@
   "cmd.portForwardAdd": "添加端口转发…",
   "cmd.portForwardStart": "启动转发",
   "cmd.portForwardStop": "停止转发",
-  "cmd.portForwardRemove": "移除端口转发"
+  "cmd.portForwardRemove": "移除端口转发",
+  "cmd.remoteFsRefreshFile": "刷新文件内容",
+  "cmd.remoteFsRefreshDir": "刷新目录",
+  "config.remoteAutoRefresh.description": "自动轮询其他服务器上文件/目录的变化（已打开的编辑器与目录树实时更新）。",
+  "config.remoteWatchIntervalSeconds.description": "轮询其他服务器文件/目录变化的间隔（秒）。"
 }

@@ -35,5 +35,9 @@
   "cmd.portForwardAdd": "Add Port Forward…",
   "cmd.portForwardStart": "Start Forwarding",
   "cmd.portForwardStop": "Stop Forwarding",
-  "cmd.portForwardRemove": "Remove Port Forward"
+  "cmd.portForwardRemove": "Remove Port Forward",
+  "cmd.remoteFsRefreshFile": "Refresh File Content",
+  "cmd.remoteFsRefreshDir": "Refresh Directory",
+  "config.remoteAutoRefresh.description": "Automatically poll files/directories of other servers for changes (open editors and the tree update live).",
+  "config.remoteWatchIntervalSeconds.description": "How often (in seconds) remote files/directories of other servers are polled for changes."
 }

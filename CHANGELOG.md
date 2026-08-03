@@ -1,3 +1,11 @@
+## v0.1.9 (2026-08-03)
+
+### Feat
+
+- live auto-refresh for files/directories of other servers (polling watcher: open editors update in place, expanded remote directories re-list on change)
+- right-click refresh for remote files ("refresh file content", forces the open editor to re-read) and remote directories
+- configurable polling: `agentDock.remoteAutoRefresh` / `agentDock.remoteWatchIntervalSeconds`
+
 ## v0.1.8 (2026-07-28)
 
 ### Feat
