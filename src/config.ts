@@ -2,12 +2,19 @@ import * as os from 'node:os';
 import * as vscode from 'vscode';
 import type { PortForward, ServerConfig } from './model';
 import { findCurrentServer, hostMatches, mergeServersByName, parseServerList, planRegistration } from './serverRegistration';
+import { createSerialQueue } from './batch';
 import { log } from './log';
 
 export { findCurrentServer, hostMatches };
 
 const SECTION = 'agentDock';
 const LEGACY_SECTIONS = ['vscoder', 'agentWorkspace'];
+
+/**
+ * servers 配置读-改-写统一串行化：所有写入口（含迁移的删除+重写两步）经同一队列，
+ * 避免并发调用互相覆盖（丢失更新）以及迁移中间态暴露空列表给其他写者。
+ */
+const configQueue = createSerialQueue();
 
 export function getServers(): ServerConfig[] {
   const cfg = vscode.workspace.getConfiguration(SECTION);
@@ -24,11 +31,13 @@ export function getServers(): ServerConfig[] {
   return parseServerList(raw);
 }
 
-export async function addServer(server: ServerConfig): Promise<void> {
-  const servers = [...getServers(), server];
-  await vscode.workspace
-    .getConfiguration(SECTION)
-    .update('servers', servers, vscode.ConfigurationTarget.Global);
+export function addServer(server: ServerConfig): Promise<void> {
+  return configQueue(async () => {
+    const servers = [...getServers(), server];
+    await vscode.workspace
+      .getConfiguration(SECTION)
+      .update('servers', servers, vscode.ConfigurationTarget.Global);
+  });
 }
 
 async function upsertServer(server: ServerConfig): Promise<void> {
@@ -50,29 +59,34 @@ async function upsertServer(server: ServerConfig): Promise<void> {
  * 别的机器后这台服务器在 AW 里消失或以别名/配置项两种形态重复出现。
  * 登记后每台机器的配置都会补全为全集，谁当前谁走原生 API。
  */
-export async function ensureCurrentServerRegistered(): Promise<void> {
-  await migrateRemoteServersToLocal();
+export function ensureCurrentServerRegistered(): Promise<void> {
+  // 迁移（删除+重写两步）与注册整体串行，避免并发写者读到迁移中间态
+  return configQueue(async () => {
+    await migrateRemoteServersToLocal();
 
-  const ctx = getCurrentContext();
-  const wsPaths = (vscode.workspace.workspaceFolders ?? [])
-    .filter((f) => f.uri.scheme === 'vscode-remote')
-    .map((f) => f.uri.path);
-  const plan = planRegistration({ isLocal: ctx.isLocal, sshHost: ctx.sshHost, wsPaths, servers: getServers() });
-  switch (plan.action) {
-    case 'skip':
-      log.child('config').debug(`register-current skipped: ${plan.reason}`);
-      return;
-    case 'none':
-      return;
-    case 'sync-folders':
-      await upsertServer({ ...plan.server, folders: plan.folders });
-      log.child('config').info(`synced ${plan.server.name} folders from workspace (${plan.folders.length})`);
-      return;
-    case 'register':
-      await upsertServer(plan.server);
-      log.child('config').info(`registered current server as ${plan.server.name}`);
-      return;
-  }
+    const ctx = getCurrentContext();
+    const wsPaths = (vscode.workspace.workspaceFolders ?? [])
+      .filter((f) => f.uri.scheme === 'vscode-remote')
+      .map((f) => f.uri.path);
+    const plan = planRegistration({ isLocal: ctx.isLocal, sshHost: ctx.sshHost, wsPaths, servers: getServers() });
+    switch (plan.action) {
+      case 'skip':
+        log.child('config').debug(`register-current skipped: ${plan.reason}`);
+        return;
+      case 'none':
+        return;
+      case 'sync-folders':
+        await upsertServer({ ...plan.server, folders: plan.folders });
+        log.child('config').info(`synced ${plan.server.name} folders from workspace (${plan.folders.length})`);
+        return;
+      case 'register':
+        await upsertServer(plan.server);
+        log.child('config').info(`registered current server as ${plan.server.name}`);
+        return;
+    }
+  }).catch((err) => {
+    log.child('config').warn(`register current failed: ${String(err)}`);
+  });
 }
 
 let migrationAttempted = false;
@@ -110,39 +124,45 @@ async function migrateRemoteServersToLocal(): Promise<void> {
   log.child('config').info(`migrated servers into client user settings (${merged.length} entries)`);
 }
 
-export async function removeServer(name: string): Promise<void> {
-  const servers = getServers().filter((s) => s.name !== name);
-  await vscode.workspace
-    .getConfiguration(SECTION)
-    .update('servers', servers, vscode.ConfigurationTarget.Global);
+export function removeServer(name: string): Promise<void> {
+  return configQueue(async () => {
+    const servers = getServers().filter((s) => s.name !== name);
+    await vscode.workspace
+      .getConfiguration(SECTION)
+      .update('servers', servers, vscode.ConfigurationTarget.Global);
+  });
 }
 
-export async function addServerFolders(name: string, folders: string[]): Promise<void> {
-  const servers = getServers();
-  const idx = servers.findIndex((s) => s.name === name);
-  if (idx < 0) {
-    return;
-  }
-  const existing = new Set(servers[idx].folders ?? []);
-  for (const f of folders) {
-    existing.add(f);
-  }
-  servers[idx] = { ...servers[idx], folders: [...existing] };
-  await vscode.workspace
-    .getConfiguration(SECTION)
-    .update('servers', servers, vscode.ConfigurationTarget.Global);
+export function addServerFolders(name: string, folders: string[]): Promise<void> {
+  return configQueue(async () => {
+    const servers = getServers();
+    const idx = servers.findIndex((s) => s.name === name);
+    if (idx < 0) {
+      return;
+    }
+    const existing = new Set(servers[idx].folders ?? []);
+    for (const f of folders) {
+      existing.add(f);
+    }
+    servers[idx] = { ...servers[idx], folders: [...existing] };
+    await vscode.workspace
+      .getConfiguration(SECTION)
+      .update('servers', servers, vscode.ConfigurationTarget.Global);
+  });
 }
 
-export async function updateServerForwards(name: string, forwards: PortForward[]): Promise<void> {
-  const servers = getServers();
-  const idx = servers.findIndex((s) => s.name === name);
-  if (idx < 0) {
-    return;
-  }
-  servers[idx] = { ...servers[idx], forwards };
-  await vscode.workspace
-    .getConfiguration(SECTION)
-    .update('servers', servers, vscode.ConfigurationTarget.Global);
+export function updateServerForwards(name: string, forwards: PortForward[]): Promise<void> {
+  return configQueue(async () => {
+    const servers = getServers();
+    const idx = servers.findIndex((s) => s.name === name);
+    if (idx < 0) {
+      return;
+    }
+    servers[idx] = { ...servers[idx], forwards };
+    await vscode.workspace
+      .getConfiguration(SECTION)
+      .update('servers', servers, vscode.ConfigurationTarget.Global);
+  });
 }
 
 export function getSessionLimit(): number {
@@ -163,6 +183,15 @@ export function getConnectInNewWindow(): boolean {
   return vscode.workspace
     .getConfiguration(SECTION)
     .get<boolean>('connectInNewWindow', false);
+}
+
+export function getRemoteAutoRefresh(): boolean {
+  return vscode.workspace.getConfiguration(SECTION).get<boolean>('remoteAutoRefresh', true);
+}
+
+export function getRemoteWatchIntervalMs(): number {
+  const seconds = vscode.workspace.getConfiguration(SECTION).get<number>('remoteWatchIntervalSeconds', 3);
+  return Math.min(Math.max(seconds, 1), 60) * 1000;
 }
 
 export interface CurrentContext {

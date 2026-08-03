@@ -17,7 +17,8 @@ export class SessionDecorationProvider implements vscode.FileDecorationProvider 
   constructor(private readonly store: SessionStore) {}
 
   refresh(): void {
-    this.realpathCache.clear();
+    // realpath 结果只与路径相关、不会因文件变化失效，缓存长留；
+    // 这里只重发装饰请求，避免每次磁盘事件都清缓存重算
     this.emitter.fire(undefined);
   }
 
@@ -32,6 +33,11 @@ export class SessionDecorationProvider implements vscode.FileDecorationProvider 
 
   async provideFileDecoration(uri: vscode.Uri): Promise<vscode.FileDecoration | undefined> {
     if (uri.scheme !== 'file' && uri.scheme !== 'vscode-remote') {
+      return undefined;
+    }
+    // 缓存为空时不触发完整会话扫描（打开资源管理器不应隐式发起 ssh 发现），
+    // 数据到达后树刷新自然会重发装饰请求
+    if (!this.store.has(CURRENT_SERVER_KEY)) {
       return undefined;
     }
     const { sessions } = await this.store.sessionsFor(CURRENT_SERVER_KEY, undefined);

@@ -1,10 +1,10 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const { isUnder, normPath, pathBasename, uriFsPath } = require('../../out/paths');
-const { partitionSessions, groupByCwd } = require('../../out/tree/structure');
+const { partitionSessions, groupByCwd, buildSessionTree, touchLru } = require('../../out/tree/structure');
 
-function sess(id, cwd, updated = 1000) {
-  return { agent: 'opencode', id, title: id, cwd, timeCreated: 0, timeUpdated: updated };
+function sess(id, cwd, updated = 1000, parentId) {
+  return { agent: 'opencode', id, title: id, cwd, timeCreated: 0, timeUpdated: updated, parentId };
 }
 
 test('isUnder: exact / child / non-child', () => {
@@ -57,4 +57,41 @@ test('uriFsPath: vscode-remote uses posix path (Windows backslash regression gua
   assert.equal(uriFsPath({ scheme: 'vscode-remote', path: '/home/u/proj', fsPath: '\\home\\u\\proj' }), '/home/u/proj');
   assert.equal(uriFsPath({ scheme: 'file', path: '/c/Users/u', fsPath: 'c:\\Users\\u' }), 'c:\\Users\\u');
   assert.equal(uriFsPath({ scheme: 'file', path: '/home/u', fsPath: '/home/u' }), '/home/u');
+});
+
+test('buildSessionTree: flat sessions with no parents', () => {
+  const tree = buildSessionTree([sess('a', '/x'), sess('b', '/x')]);
+  assert.deepEqual(tree.map((n) => n.session.id), ['a', 'b']);
+  assert.equal(tree[0].children.length, 0);
+});
+
+test('buildSessionTree: nested sessions of depth >= 2 are all attached', () => {
+  const tree = buildSessionTree([
+    sess('top', '/x', 5),
+    sess('mid', '/x', 4, 'top'),
+    sess('leaf', '/x', 3, 'mid'),
+    sess('leaf2', '/x', 2, 'mid'),
+    sess('orphan', '/x', 1, 'missing-parent'), // parent not in list -> top
+  ]);
+  assert.deepEqual(tree.map((n) => n.session.id), ['top', 'orphan']);
+  const top = tree[0];
+  assert.deepEqual(top.children.map((c) => c.session.id), ['mid']);
+  const mid = top.children[0];
+  assert.deepEqual(mid.children.map((c) => c.session.id), ['leaf', 'leaf2']);
+  assert.equal(mid.children[0].children.length, 0);
+});
+
+test('touchLru: moves key to most-recent and evicts oldest beyond max', () => {
+  const map = new Map();
+  touchLru(map, 'a', 1, 3);
+  touchLru(map, 'b', 2, 3);
+  touchLru(map, 'c', 3, 3);
+  assert.deepEqual([...map.keys()], ['a', 'b', 'c']);
+  // touch a -> moves to end
+  touchLru(map, 'a', 1, 3);
+  assert.deepEqual([...map.keys()], ['b', 'c', 'a']);
+  // insert d -> evicts b
+  const evicted = touchLru(map, 'd', 4, 3);
+  assert.equal(evicted, 'b');
+  assert.deepEqual([...map.keys()], ['c', 'a', 'd']);
 });

@@ -4,14 +4,17 @@ import { AGENT_LABEL } from '../model';
 import { classifyServers, getCurrentContext, getCurrentDisplayName, getServers, getSessionLimit, getSshTimeoutMs } from '../config';
 import { buildDiscoveryScript } from '../agents/discoveryScript';
 import { parseDiscoveryOutput } from '../agents/parse';
-import { shq } from '../ssh/remoteExec';
+import { execRemote, shq } from '../ssh/remoteExec';
 import { execRemoteSmart } from '../ssh/progress';
+import { getRemoteAutoRefresh, getRemoteWatchIntervalMs } from '../config';
 import { currentWindowId, execCurrent, realpathCurrent } from '../ssh/currentExec';
 import { detectListeningServices, isForwardActive, type ListeningService } from '../ssh/portForward';
 import { joinRemotePath, remoteUri } from '../ssh/remoteFsProvider';
 import { parseLsAp } from '../ssh/remoteFsParse';
+import { parseDirMtimeLine } from '../ssh/remoteFsPoll';
 import { isUnder, normPath, pathBasename, uriFsPath } from '../paths';
-import { groupByCwd, partitionSessions } from './structure';
+import { buildSessionTree, groupByCwd, partitionSessions, touchLru, type SessionTreeNode } from './structure';
+import { createSerialQueue } from '../batch';
 import { t } from '../i18n';
 import { log } from '../log';
 
@@ -66,6 +69,8 @@ export class SessionStore {
   private inflight = new Map<string, Promise<void>>();
   private stale = new Set<string>();
   private memento?: vscode.Memento;
+  /** 持久化串行化：并发 update 完成顺序不定会以旧快照覆盖新快照 */
+  private readonly persistQueue = createSerialQueue();
 
   onDidSettle?: (key: string) => void;
 
@@ -99,8 +104,11 @@ export class SessionStore {
     for (const [key, sessions] of this.cache) {
       out[key] = { sessions: sessions.slice(0, 300), error: this.errors.get(key) };
     }
-    await this.memento.update('agentDock.sessionCache.v1', out);
-    await this.memento.update('agentDock.currentWindowId.v1', currentWindowId());
+    const memento = this.memento;
+    return this.persistQueue(async () => {
+      await memento.update('agentDock.sessionCache.v1', out);
+      await memento.update('agentDock.currentWindowId.v1', currentWindowId());
+    }).catch((err) => log.child('cache').warn(`session cache persist failed: ${String(err)}`));
   }
 
   has(key: string): boolean {
@@ -219,6 +227,7 @@ export class WorkspaceProvider implements vscode.TreeDataProvider<Node> {
   refresh(key?: string): void {
     this.wsPathsCache = undefined;
     this.remoteDirCache.clear();
+    this.dirMtimes.clear();
     void this.persistRemoteDirCache();
     this.store.invalidate(key);
     void this.store.persist();
@@ -230,11 +239,13 @@ export class WorkspaceProvider implements vscode.TreeDataProvider<Node> {
   }
 
   /**
-   * 局部刷新统一入口：只重绘指定服务器的端口子树，不触碰会话/目录缓存。
-   * 新操作需要局部刷新时按此模式加专用方法，不要回退到全量 refresh()。
+   * 端口子树局部刷新：TreeView 的 onDidChangeTreeData(element) 按对象身份匹配现存节点，
+   * 而节点每次 getChildren 都重建、无法跨调用保持实例，新建字面量会被静默忽略；
+   * 这里回退为全量重绘，保证转发启停/增删后状态图标可靠更新。
    */
   refreshPorts(serverKey: string): void {
-    this.onDidChangeEmitter.fire({ kind: 'portsRoot', serverKey });
+    void serverKey;
+    this.onDidChangeEmitter.fire(undefined);
   }
 
   /** 文件系统变化专用：只重绘树，不触碰会话缓存与远程目录缓存（配合 FileSystemWatcher 实时刷新） */
@@ -324,7 +335,7 @@ export class WorkspaceProvider implements vscode.TreeDataProvider<Node> {
         );
         item.contextValue = node.isDir ? 'remoteFsDir' : 'remoteFsFile';
         item.iconPath = node.isDir ? vscode.ThemeIcon.Folder : vscode.ThemeIcon.File;
-        item.tooltip = t('Read-only snapshot on {0} (refresh to update)', node.serverKey);
+        item.tooltip = t('Live read-only preview on {0} (auto-refreshes)', node.serverKey);
         if (!node.isDir) {
           const uri = remoteUri(node.serverKey, node.path);
           item.resourceUri = uri;
@@ -576,24 +587,37 @@ export class WorkspaceProvider implements vscode.TreeDataProvider<Node> {
     const list = sessions
       .filter((s) => s.cwd && isUnder(s.cwd, folderPath))
       .sort((a, b) => b.timeUpdated - a.timeUpdated);
-    const ids = new Set(list.map((s) => s.id));
-    const childrenOf = new Map<string, Node[]>();
-    const top: AgentSession[] = [];
-    for (const s of list) {
-      if (s.parentId && ids.has(s.parentId)) {
-        const arr = childrenOf.get(s.parentId) ?? [];
-        arr.push({ kind: 'session', serverKey, session: s });
-        childrenOf.set(s.parentId, arr);
-      } else {
-        top.push(s);
-      }
-    }
-    return top.map((s) => ({ kind: 'session', serverKey, session: s, children: childrenOf.get(s.id) }));
+    // 递归树：深度 ≥2 的嵌套会话不再丢失
+    const toNode = (n: SessionTreeNode): Node => ({
+      kind: 'session',
+      serverKey,
+      session: n.session,
+      children: n.children.map(toNode),
+    });
+    return buildSessionTree(list).map(toNode);
   }
 
   private remoteDirCache = new Map<string, Node[]>();
   private staleDirs = new Set<string>();
   private memento?: vscode.Memento;
+
+  /** 最近展开的远程目录：轮询其 mtime 检测条目增删，变化即重列并重绘树。 */
+  private expandedDirs = new Map<string, { serverKey: string; path: string }>();
+  private dirMtimes = new Map<string, number>();
+  private dirPollTimer?: NodeJS.Timeout;
+  private dirPolling = false;
+  /** 展开目录 LRU 上限：折叠目录无法感知（TreeView 不回调），用数量上限兜底内存。 */
+  private static readonly MAX_EXPANDED_DIRS = 1000;
+  private readonly persistDirCacheQueue = createSerialQueue();
+  private lastPersistedDirCacheJson = '';
+
+  private touchExpandedDir(serverKey: string, path: string): void {
+    const key = `${serverKey}:${path}`;
+    const evicted = touchLru(this.expandedDirs, key, { serverKey, path }, WorkspaceProvider.MAX_EXPANDED_DIRS);
+    if (evicted !== undefined) {
+      this.dirMtimes.delete(evicted);
+    }
+  }
 
   initPersistence(memento: vscode.Memento): void {
     this.memento = memento;
@@ -611,12 +635,25 @@ export class WorkspaceProvider implements vscode.TreeDataProvider<Node> {
     if (!this.memento) {
       return;
     }
-    const entries = [...this.remoteDirCache.entries()].slice(-200);
-    await this.memento.update('agentDock.remoteDirCache.v1', Object.fromEntries(entries));
+    const entries = [...this.remoteDirCache.entries()]
+      .slice(-200)
+      .map(([key, nodes]) => [key, nodes.slice(0, 200)] as const);
+    const json = JSON.stringify(Object.fromEntries(entries));
+    if (json === this.lastPersistedDirCacheJson) {
+      return; // 无变化不写，避免每次目录拉取都全量落盘
+    }
+    this.lastPersistedDirCacheJson = json;
+    const memento = this.memento;
+    return this.persistDirCacheQueue(async () => {
+      await memento.update('agentDock.remoteDirCache.v1', Object.fromEntries(entries));
+    }).catch((err) => log.child('fs').warn(`remote dir cache persist failed: ${String(err)}`));
   }
 
   private async remoteDirChildren(serverKey: string, path: string, parent?: Node): Promise<Node[]> {
     const cacheKey = `${serverKey}:${path}`;
+    // 该目录正处于展开状态：纳入目录轮询，条目变化时自动重列（配合 FileSystemWatcher 实时刷新）
+    this.touchExpandedDir(serverKey, path);
+    this.ensureDirPolling();
     const cached = this.remoteDirCache.get(cacheKey);
     if (cached) {
       if (this.staleDirs.delete(cacheKey)) {
@@ -630,16 +667,106 @@ export class WorkspaceProvider implements vscode.TreeDataProvider<Node> {
     return this.fetchRemoteDir(serverKey, path, parent);
   }
 
-  private async fetchRemoteDir(serverKey: string, path: string, parent?: Node): Promise<Node[]> {
+  /**
+   * 手动刷新远程目录：清缓存 → 重新拉取 → 重绘。右键菜单与内部轮询共用。
+   * 直接 fetchRemoteDir 而非走 remoteDirChildren，避免展开状态/轮询副作用。
+   */
+  async refreshRemoteDir(serverKey: string, path: string): Promise<void> {
+    const cacheKey = `${serverKey}:${path}`;
+    this.remoteDirCache.delete(cacheKey);
+    this.dirMtimes.delete(cacheKey);
+    await this.fetchRemoteDir(serverKey, path);
+    this.onDidChangeEmitter.fire(undefined);
+  }
+
+  private ensureDirPolling(): void {
+    if (this.dirPollTimer || this.expandedDirs.size === 0 || !getRemoteAutoRefresh()) {
+      return;
+    }
+    this.dirPollTimer = setTimeout(() => void this.pollExpandedDirs(), getRemoteWatchIntervalMs());
+  }
+
+  /** 每轮对展开中的远程目录做一次轻量 stat（按服务器合并为一条 ssh 调用），mtime 变化才重列。 */
+  private async pollExpandedDirs(): Promise<void> {
+    this.dirPollTimer = undefined;
+    if (this.dirPolling || this.expandedDirs.size === 0) {
+      return;
+    }
+    if (!getRemoteAutoRefresh()) {
+      this.expandedDirs.clear();
+      return;
+    }
+    this.dirPolling = true;
+    try {
+      const byServer = new Map<string, { serverKey: string; dirs: { key: string; path: string }[] }>();
+      for (const [key, d] of this.expandedDirs) {
+        const g = byServer.get(d.serverKey) ?? { serverKey: d.serverKey, dirs: [] };
+        g.dirs.push({ key, path: d.path });
+        byServer.set(d.serverKey, g);
+      }
+      const changedKeys: string[] = [];
+      // 各服务器并发探测（全局 ssh 信号量已限并发），避免一台慢服务器拖长整轮
+      await Promise.all(
+        [...byServer.values()].map(async (g) => {
+          const server = this.serverConfigFor(g.serverKey);
+          if (!server) {
+            return;
+          }
+          try {
+            const script = g.dirs
+              .map((d) => `printf '%s|' ${shq(d.path)}; stat -c '%Y' -- ${shq(d.path)} 2>/dev/null || echo -`)
+              .join('\n');
+            const res = await execRemote(server, script, 15_000);
+            if (res.code !== 0) {
+              return; // 瞬时失败：下一轮再试
+            }
+            for (const line of res.stdout.split('\n')) {
+              const parsed = parseDirMtimeLine(line);
+              if (!parsed) {
+                continue;
+              }
+              const key = `${g.serverKey}:${parsed.path}`;
+              const prev = this.dirMtimes.get(key);
+              if (prev !== undefined && prev !== parsed.mtimeSec) {
+                changedKeys.push(key);
+              }
+              this.dirMtimes.set(key, parsed.mtimeSec);
+            }
+          } catch (err) {
+            log.child('fs').debug(`dir poll ${g.serverKey} failed: ${String(err)}`);
+          }
+        }),
+      );
+      if (changedKeys.length > 0) {
+        for (const key of changedKeys) {
+          const d = this.expandedDirs.get(key);
+          if (d) {
+            await this.fetchRemoteDir(d.serverKey, d.path, undefined, true);
+          }
+        }
+        log.child('fs').debug(`dir poll: ${changedKeys.length} remote dir(s) changed → tree refreshed`);
+        this.onDidChangeEmitter.fire(undefined);
+      }
+    } catch (err) {
+      log.child('fs').debug(`dir poll failed: ${String(err)}`);
+    } finally {
+      this.dirPolling = false;
+      this.ensureDirPolling();
+    }
+  }
+
+  private async fetchRemoteDir(serverKey: string, path: string, parent?: Node, quiet = false): Promise<Node[]> {
     const cacheKey = `${serverKey}:${path}`;
     const server = this.serverConfigFor(serverKey);
     if (!server) {
       return [{ kind: 'info', label: t('Server not found in config'), severity: 'warning' }];
     }
-    const res = await execRemoteSmart(server, `ls -1Ap --color=never ${shq(path)}`, {
-      timeoutMs: getSshTimeoutMs(),
-      title: t('Reading {0} on {1}…', path, server.name),
-    });
+    const res = quiet
+      ? await execRemote(server, `ls -1Ap --color=never ${shq(path)}`, getSshTimeoutMs())
+      : await execRemoteSmart(server, `ls -1Ap --color=never ${shq(path)}`, {
+          timeoutMs: getSshTimeoutMs(),
+          title: t('Reading {0} on {1}…', path, server.name),
+        });
     if (res.cancelled) {
       return [{ kind: 'info', label: t('Skipped'), severity: 'info' }];
     }

@@ -27,6 +27,7 @@ import { pickDirectory, type SubdirsResult } from './views/dirPicker';
 import { SessionPanel, type SessionTarget } from './views/sessionPanel';
 import type { Node, WorkspaceProvider } from './tree/workspaceProvider';
 import { CURRENT_SERVER_KEY } from './tree/workspaceProvider';
+import { remoteFsProvider, remoteUri } from './ssh/remoteFsProvider';
 import { t } from './i18n';
 import { log } from './log';
 
@@ -36,6 +37,7 @@ type FsEntryNode = Extract<Node, { kind: 'fsEntry' }>;
 type FolderNode = Extract<Node, { kind: 'folder' }>;
 type PortsRootNode = Extract<Node, { kind: 'portsRoot' }>;
 type PortForwardNode = Extract<Node, { kind: 'portForward' }>;
+type RemoteFsEntryNode = Extract<Node, { kind: 'remoteFsEntry' }>;
 
 function parentUri(uri: vscode.Uri): vscode.Uri {
   return vscode.Uri.joinPath(uri, '..');
@@ -414,6 +416,14 @@ export function registerCommands(context: vscode.ExtensionContext, provider: Wor
       t('Remove'),
     );
     if (ok) {
+      // 先停掉该服务器的活跃转发（专用 ssh -N 子进程/master 转发），再删配置
+      for (const f of node.server.forwards ?? []) {
+        try {
+          await stopForward(node.server, f);
+        } catch (err) {
+          log.child('forward').warn(`stop forward on remove failed: ${String(err)}`);
+        }
+      }
       await removeServer(node.server.name);
     }
   });
@@ -704,5 +714,36 @@ export function registerCommands(context: vscode.ExtensionContext, provider: Wor
 
   reg('agentDock.showLog', () => {
     log.show();
+  });
+
+  /**
+   * 右键远程文件「刷新文件内容」：派发变更事件让已打开的编辑器重读，
+   * 并强制 revert（stat 未变化时 VSCode 不会自动重载，覆盖同秒内多次写入的情况）。
+   */
+  reg('agentDock.remoteFsRefreshFile', async (node: RemoteFsEntryNode) => {
+    if (node?.kind !== 'remoteFsEntry' || node.isDir) {
+      return;
+    }
+    const uri = remoteUri(node.serverKey, node.path);
+    remoteFsProvider.notifyChanged(uri);
+    const open = vscode.workspace.textDocuments.find((d) => d.uri.toString() === uri.toString());
+    if (open) {
+      try {
+        await vscode.window.showTextDocument(open.uri, { preview: false, preserveFocus: true });
+        await vscode.commands.executeCommand('workbench.action.files.revert');
+      } catch (err) {
+        log.child('fs').warn(`forced reload of ${uri.path} failed: ${String(err)}`);
+      }
+    }
+    provider.refreshFs();
+    vscode.window.setStatusBarMessage(t('Refreshed {0}', node.name), 3000);
+  });
+
+  /** 右键远程目录「刷新」：清缓存重列该目录并重绘树。 */
+  reg('agentDock.remoteFsRefreshDir', async (node: RemoteFsEntryNode) => {
+    if (node?.kind !== 'remoteFsEntry' || !node.isDir) {
+      return;
+    }
+    await provider.refreshRemoteDir(node.serverKey, node.path);
   });
 }
