@@ -2,16 +2,23 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const { parseLsAp, parseStatFs, joinRemotePath } = require('../../out/ssh/remoteFsParse');
 
-test('parseLsAp: dirs, symlinks, executables, sockets, plain files', () => {
-  const out = parseLsAp('src/\nREADME.md\nrun.sh*\nlink@\nsock=\n./\n../\n.fifo|\n');
+test('parseLsAp: -p semantics — only "/" stripped, marker chars kept verbatim', () => {
+  // ls -1Ap 只给真目录追加 '/'；以 * @ = | % 结尾的文件名必须原样保留
+  const out = parseLsAp('src/\nREADME.md\nrun.sh*\nlink@\nsock=\n./\n../\n.fifo|\nfoo%');
   assert.deepEqual(out, [
     { name: 'src', isDir: true },
     { name: 'README.md', isDir: false },
-    { name: 'run.sh', isDir: false },
-    { name: 'link', isDir: false },
-    { name: 'sock', isDir: false },
-    { name: '.fifo', isDir: false },
+    { name: 'run.sh*', isDir: false },
+    { name: 'link@', isDir: false },
+    { name: 'sock=', isDir: false },
+    { name: '.fifo|', isDir: false },
+    { name: 'foo%', isDir: false },
   ]);
+});
+
+test('parseLsAp: empty input / empty dir block', () => {
+  assert.deepEqual(parseLsAp(''), []);
+  assert.deepEqual(parseLsAp('\n'), []);
 });
 
 test('parseStatFs: directory / regular / symlink / invalid', () => {

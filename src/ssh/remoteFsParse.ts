@@ -3,7 +3,12 @@ export interface LsEntry {
   isDir: boolean;
 }
 
-/** 解析 `ls -1Ap --color=never` 输出：/ 目录、@ 符号链接、* 可执行、= socket、| fifo、% whiteout。 */
+/**
+ * 解析 `ls -1Ap --color=never` 输出。
+ * -p 只给真目录追加 '/'，不产生 @ * = | % 等类型标记（那些是 -F 的行为）；
+ * 因此只剥离 '/'，其余原样保留——按 -F 语义剥尾字符会截断
+ * 以 `* @ = | %` 结尾的合法文件名（如脚本 `foo*`）。
+ */
 export function parseLsAp(output: string): LsEntry[] {
   const out: LsEntry[] = [];
   for (const line of output.split('\n')) {
@@ -11,11 +16,8 @@ export function parseLsAp(output: string): LsEntry[] {
     if (!s || s === './' || s === '../') {
       continue;
     }
-    const last = s.slice(-1);
-    if (last === '/') {
+    if (s.endsWith('/')) {
       out.push({ name: s.slice(0, -1), isDir: true });
-    } else if (last === '@' || last === '*' || last === '=' || last === '|' || last === '%') {
-      out.push({ name: s.slice(0, -1), isDir: false });
     } else {
       out.push({ name: s, isDir: false });
     }
