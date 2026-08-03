@@ -177,6 +177,10 @@ class ClientPty implements vscode.Pseudoterminal {
     this.spawned = false;
     // 事件按 child 实例过滤：主 spawn 失败后 fallback 已接管，旧进程的 error/close 不得再改状态
     const isCurrent = (): boolean => this.child === child;
+    // 子进程提前退出后向 stdin 写入会触发 EPIPE；无监听的 'error' 会抛成未捕获异常
+    child.stdin?.on('error', () => {});
+    child.stdout?.on('error', () => {});
+    child.stderr?.on('error', () => {});
     child.stdout?.on('data', (d: Buffer) => {
       if (isCurrent()) {
         this.writeEmitter.fire(toCrlf(d.toString('utf8')));
@@ -231,6 +235,10 @@ class ClientPty implements vscode.Pseudoterminal {
     }
     if (this.ptyProc) {
       this.ptyProc.write(data);
+      return;
+    }
+    // 子进程已退出（exitCode 非 null）时跳过写入，配合 stdin error 监听避免 EPIPE 抛异常
+    if (this.child && this.child.exitCode !== null) {
       return;
     }
     if (!this.dumb) {

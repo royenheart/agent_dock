@@ -72,7 +72,11 @@ class Logger implements SubLogger {
 
   refreshLevel(): void {
     const configured = vscode.workspace.getConfiguration(SECTION).get<string>('logLevel', 'info');
-    this.level = (configured as Level) || 'info';
+    // 非法级别会让 ORDER[level] 为 undefined，级别过滤被整体绕过，必须回退
+    this.level =
+      configured === 'debug' || configured === 'info' || configured === 'warn' || configured === 'error'
+        ? configured
+        : 'info';
   }
 
   show(): void {

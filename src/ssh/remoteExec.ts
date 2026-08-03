@@ -18,6 +18,8 @@ export interface ExecResult {
   /** true when the process was killed for exceeding the timeout. */
   timedOut: boolean;
   cancelled?: boolean;
+  /** true when stdout exceeded the output cap and the process was killed. */
+  truncated?: boolean;
 }
 
 export interface ExecBufferResult {
@@ -26,11 +28,18 @@ export interface ExecBufferResult {
   code: number;
   timedOut: boolean;
   cancelled?: boolean;
+  /** true when stdout exceeded the output cap and the process was killed. */
+  truncated?: boolean;
 }
 
 export interface ExecOptions {
   signal?: AbortSignal;
+  /** stdout 累计上限（字节），超过即 kill 子进程并以 truncated 返回。 */
+  maxOutputBytes?: number;
 }
+
+/** stdout 默认累计上限：防止失控远端脚本/大文件刷爆扩展宿主内存。 */
+export const MAX_OUTPUT_BYTES = 16 * 1024 * 1024;
 
 export class ExecError extends Error {
   constructor(
@@ -47,8 +56,13 @@ function spawnCollect(
   stdinData: string | undefined,
   timeoutMs: number,
   signal?: AbortSignal,
+  maxOutputBytes: number = MAX_OUTPUT_BYTES,
 ): Promise<ExecBufferResult> {
   return new Promise((resolve, reject) => {
+    if (signal?.aborted) {
+      resolve({ stdout: Buffer.alloc(0), stderr: '', code: -1, timedOut: false, cancelled: true });
+      return;
+    }
     let child;
     try {
       child = spawn(command, args, { stdio: ['pipe', 'pipe', 'pipe'] });
@@ -57,19 +71,38 @@ function spawnCollect(
       return;
     }
     const outChunks: Buffer[] = [];
+    let outBytes = 0;
     let stderr = '';
     let timedOut = false;
     let cancelled = false;
+    let truncated = false;
+    // 子进程提前退出（ENOENT、连接被拒、SIGKILL 后仍在写）时管道写入会触发 EPIPE；
+    // 无监听的 'error' 事件在 Node 中直接抛出，成为扩展宿主的未捕获异常，必须吞掉。
+    child.stdin?.on('error', () => {});
+    child.stdout?.on('error', () => {});
+    child.stderr?.on('error', () => {});
+    const kill = (): void => {
+      // 先 SIGTERM 让 ssh 干净退出并清理 ControlMaster socket，短暂宽限后再 SIGKILL，
+      // 避免直接 SIGKILL 杀掉共享 master 连接殃及同服务器其他并发操作。
+      child.kill('SIGTERM');
+      setTimeout(() => child.kill('SIGKILL'), 500).unref();
+    };
     const timer = setTimeout(() => {
       timedOut = true;
-      child.kill('SIGKILL');
+      kill();
     }, timeoutMs);
     const onAbort = (): void => {
       cancelled = true;
-      child.kill('SIGKILL');
+      kill();
     };
     signal?.addEventListener('abort', onAbort, { once: true });
     child.stdout.on('data', (d: Buffer) => {
+      outBytes += d.length;
+      if (outBytes > maxOutputBytes) {
+        truncated = true;
+        kill();
+        return;
+      }
       outChunks.push(d);
     });
     child.stderr.on('data', (d: Buffer) => {
@@ -83,7 +116,7 @@ function spawnCollect(
     child.on('close', (code) => {
       clearTimeout(timer);
       signal?.removeEventListener('abort', onAbort);
-      resolve({ stdout: Buffer.concat(outChunks), stderr, code: code ?? -1, timedOut, cancelled });
+      resolve({ stdout: Buffer.concat(outChunks), stderr, code: code ?? -1, timedOut, cancelled, truncated });
     });
     if (stdinData !== undefined) {
       child.stdin.write(stdinData);
@@ -92,28 +125,73 @@ function spawnCollect(
   });
 }
 
-class Semaphore {
+/**
+ * 带取消的并发信号量：acquire(signal) 返回 true 表示拿到槽位；
+ * 排队期间 signal 被 abort 则从队列移除并返回 false（不占用槽位）。
+ */
+export class Semaphore {
   private running = 0;
-  private readonly queue: (() => void)[] = [];
+  private readonly queue: {
+    resolve: (v: boolean) => void;
+    signal?: AbortSignal;
+    onAbort?: () => void;
+    settled?: boolean;
+  }[] = [];
 
   constructor(private readonly max: number) {}
 
-  async acquire(): Promise<void> {
+  acquire(signal?: AbortSignal): Promise<boolean> {
+    if (signal?.aborted) {
+      return Promise.resolve(false);
+    }
     if (this.running < this.max) {
       this.running += 1;
-      return;
+      return Promise.resolve(true);
     }
-    await new Promise<void>((resolve) => this.queue.push(resolve));
-    this.running += 1;
+    return new Promise<boolean>((resolve) => {
+      const entry: { resolve: (v: boolean) => void; signal?: AbortSignal; onAbort?: () => void; settled?: boolean } = {
+        resolve,
+        signal,
+      };
+      if (signal) {
+        entry.onAbort = (): void => {
+          entry.settled = true;
+          const idx = this.queue.indexOf(entry);
+          if (idx >= 0) {
+            this.queue.splice(idx, 1);
+          }
+          resolve(false);
+        };
+        signal.addEventListener('abort', entry.onAbort, { once: true });
+      }
+      this.queue.push(entry);
+      // 极端窗口：abort 在 addEventListener 与 push 之间派发时 onAbort 已 resolve，
+      // 这里把残留的 entry 移出队列，避免永久占位导致槽位泄漏
+      if (entry.settled) {
+        const idx = this.queue.indexOf(entry);
+        if (idx >= 0) {
+          this.queue.splice(idx, 1);
+        }
+      }
+    });
   }
 
   release(): void {
     this.running -= 1;
-    this.queue.shift()?.();
+    while (this.queue.length > 0) {
+      const next = this.queue.shift()!;
+      if (next.signal && next.onAbort) {
+        next.signal.removeEventListener('abort', next.onAbort);
+      }
+      next.resolve(true);
+      this.running += 1;
+      return;
+    }
   }
 }
 
-const sshSemaphore = new Semaphore(4);
+/** 全局 ssh 并发上限：所有远端调用（含 runSsh）共用，避免超出 sshd/连接预算。 */
+export const sshSemaphore = new Semaphore(4);
 
 function scriptSummary(script: string): string {
   const first = script.split('\n').find((l) => l.trim() && !l.startsWith('#')) ?? '';
@@ -173,11 +251,15 @@ export async function execRemote(
   const dest = sshDestination(server);
   const id = ++callSeq;
   const enqueued = Date.now();
-  await sshSemaphore.acquire();
+  const acquired = await sshSemaphore.acquire(opts?.signal);
+  if (!acquired || opts?.signal?.aborted) {
+    slog.debug(`#${id} ✗ ${dest} cancelled before spawn`);
+    return { stdout: '', stderr: '', code: -1, timedOut: false, cancelled: true };
+  }
   const started = Date.now();
   try {
     slog.debug(`#${id} → ${dest} ← ${scriptSummary(script)}`, { argv: `ssh ${args.join(' ')}`, scriptBytes: script.length, queueMs: started - enqueued || undefined });
-    const res = await spawnCollect('ssh', args, script, timeoutMs, opts?.signal).catch((e) => logSpawnError(id, dest, e));
+    const res = await spawnCollect('ssh', args, script, timeoutMs, opts?.signal, opts?.maxOutputBytes).catch((e) => logSpawnError(id, dest, e));
     logResult(id, dest, res, Date.now() - started);
     return { ...res, stdout: res.stdout.toString('utf8') };
   } finally {
@@ -198,11 +280,15 @@ export async function execRemoteBuffer(
   args.push(sshDestination(server), 'bash', '-s');
   const id = ++callSeq;
   const enqueued = Date.now();
-  await sshSemaphore.acquire();
+  const acquired = await sshSemaphore.acquire(opts?.signal);
+  if (!acquired || opts?.signal?.aborted) {
+    slog.debug(`#${id} ✗ ${sshDestination(server)} cancelled before spawn`);
+    return { stdout: Buffer.alloc(0), stderr: '', code: -1, timedOut: false, cancelled: true };
+  }
   const started = Date.now();
   try {
     slog.debug(`#${id} → ${sshDestination(server)} ← ${scriptSummary(script)} (binary)`, { queueMs: started - enqueued || undefined });
-    const res = await spawnCollect('ssh', args, script, timeoutMs, opts?.signal).catch((e) => logSpawnError(id, sshDestination(server), e));
+    const res = await spawnCollect('ssh', args, script, timeoutMs, opts?.signal, opts?.maxOutputBytes).catch((e) => logSpawnError(id, sshDestination(server), e));
     logResult(id, sshDestination(server), res, Date.now() - started);
     return res;
   } finally {
@@ -219,18 +305,27 @@ export async function runSsh(server: ServerConfig, extraArgs: string[], timeoutM
   args.push(...extraArgs);
   const id = ++callSeq;
   const started = Date.now();
-  slog.debug(`#${id} → ${sshDestination(server)} (raw)`, { argv: `ssh ${args.join(' ')}` });
-  const res = await spawnCollect('ssh', args, undefined, timeoutMs).catch((e) => logSpawnError(id, sshDestination(server), e));
-  logResult(id, sshDestination(server), res, Date.now() - started);
-  return { ...res, stdout: res.stdout.toString('utf8') };
+  // 与其他远端调用共用全局并发上限，避免轮询/扫描占满时叠加出额外 ssh 进程
+  const acquired = await sshSemaphore.acquire();
+  if (!acquired) {
+    return { stdout: '', stderr: '', code: -1, timedOut: false, cancelled: true };
+  }
+  try {
+    slog.debug(`#${id} → ${sshDestination(server)} (raw)`, { argv: `ssh ${args.join(' ')}` });
+    const res = await spawnCollect('ssh', args, undefined, timeoutMs).catch((e) => logSpawnError(id, sshDestination(server), e));
+    logResult(id, sshDestination(server), res, Date.now() - started);
+    return { ...res, stdout: res.stdout.toString('utf8') };
+  } finally {
+    sshSemaphore.release();
+  }
 }
 
 /** Run a bash script on the machine the extension host runs on (= current server). */
-export async function execLocal(script: string, timeoutMs = 60_000): Promise<ExecResult> {
+export async function execLocal(script: string, timeoutMs = 60_000, opts?: ExecOptions): Promise<ExecResult> {
   const id = ++callSeq;
   const started = Date.now();
   slog.debug(`#${id} → local ← ${scriptSummary(script)}`, { scriptBytes: script.length });
-  const res = await spawnCollect('bash', ['-s'], script, timeoutMs).catch((e) => logSpawnError(id, 'local', e));
+  const res = await spawnCollect('bash', ['-s'], script, timeoutMs, opts?.signal, opts?.maxOutputBytes).catch((e) => logSpawnError(id, 'local', e));
   logResult(id, 'local', res, Date.now() - started);
   return { ...res, stdout: res.stdout.toString('utf8') };
 }
