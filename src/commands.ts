@@ -10,6 +10,7 @@ import {
   getCurrentContext,
   getServers,
   getSessionLimit,
+  getSshTimeoutMs,
   removeServer,
   updateServerForwards,
 } from './config';
@@ -18,8 +19,10 @@ import { buildDiscoveryScript } from './agents/discoveryScript';
 import { parseDiscoveryOutput } from './agents/parse';
 import { execRemote, sshDestination, shq } from './ssh/remoteExec';
 import { buildListDirsScript } from './ssh/sshArgs';
+import { joinRemotePath } from './ssh/remoteFsParse';
 import { currentFileUri, currentHomeDir, currentNeedsSsh, currentServerConfig } from './ssh/currentExec';
 import { openClientTerminal, sshSpawnSpec } from './ssh/clientTerminal';
+import { trackNativeTerminal } from './ssh/nativeTerminal';
 import { forwardSpec, setOnDidChange, startForward, stopForward } from './ssh/portForward';
 import { readSshConfigHosts, type SshHostEntry } from './ssh/sshConfig';
 import { pathBasename, uriFsPath } from './paths';
@@ -38,6 +41,13 @@ type FolderNode = Extract<Node, { kind: 'folder' }>;
 type PortsRootNode = Extract<Node, { kind: 'portsRoot' }>;
 type PortForwardNode = Extract<Node, { kind: 'portForward' }>;
 type RemoteFsEntryNode = Extract<Node, { kind: 'remoteFsEntry' }>;
+
+/** 复制/粘贴的剪贴板：本地条目记 uri，远程条目记 serverKey+path。 */
+type CopyClipboard =
+  | { kind: 'local'; uri: vscode.Uri; name: string; isDir: boolean }
+  | { kind: 'remote'; serverKey: string; path: string; name: string; isDir: boolean };
+
+let copyClipboard: CopyClipboard | undefined;
 
 function parentUri(uri: vscode.Uri): vscode.Uri {
   return vscode.Uri.joinPath(uri, '..');
@@ -78,7 +88,11 @@ export function resumeInTerminal(target: SessionTarget): void {
   const full = session.cwd ? `cd ${shq(session.cwd)} && ${cmd}` : cmd;
   if (server) {
     if (currentNeedsSsh()) {
-      openClientTerminal({ name, spec: sshSpawnSpec(server, full) });
+      openClientTerminal({
+        name,
+        spec: sshSpawnSpec(server, full),
+        persist: { name, kind: 'ssh', serverName: server.name, remoteCommand: full },
+      });
       return;
     }
     const port = server.port ? `-p ${server.port} ` : '';
@@ -439,7 +453,11 @@ export function registerCommands(context: vscode.ExtensionContext, provider: Wor
       return;
     }
     if (currentNeedsSsh()) {
-      openClientTerminal({ name: `ssh: ${node.server.name}`, spec: sshSpawnSpec(node.server) });
+      openClientTerminal({
+        name: `ssh: ${node.server.name}`,
+        spec: sshSpawnSpec(node.server),
+        persist: { name: `ssh: ${node.server.name}`, kind: 'ssh', serverName: node.server.name },
+      });
       return;
     }
     const term = vscode.window.createTerminal({ name: `ssh: ${node.server.name}` });
@@ -450,7 +468,10 @@ export function registerCommands(context: vscode.ExtensionContext, provider: Wor
 
   reg('agentDock.openClientTerminal', () => {
     if (currentNeedsSsh()) {
-      openClientTerminal({ name: t('Client Terminal') });
+      openClientTerminal({
+        name: t('Client Terminal'),
+        persist: { name: t('Client Terminal'), kind: 'shell' },
+      });
     } else {
       // 本地窗口的原生终端本身就是客户端终端，走原生 profile 体验更好
       vscode.window.createTerminal({ name: t('Client Terminal') }).show();
@@ -493,6 +514,45 @@ export function registerCommands(context: vscode.ExtensionContext, provider: Wor
   reg('agentDock.fsCopyRelativePath', async (node: FsEntryNode) => {
     if (node?.uri) {
       await vscode.commands.executeCommand('copyRelativeFilePath', node.uri);
+    }
+  });
+
+  /** 复制本地文件/目录到扩展内剪贴板（配合「粘贴」使用）。 */
+  reg('agentDock.fsCopy', (node: FsEntryNode) => {
+    if (node?.kind !== 'fsEntry') {
+      return;
+    }
+    copyClipboard = { kind: 'local', uri: node.uri, name: node.name, isDir: node.isDir };
+    vscode.window.setStatusBarMessage(t('Copied {0}', node.name), 3000);
+  });
+
+  /** 把剪贴板里的本地条目粘贴到目标目录（fsDir 或 workspace 文件夹）。 */
+  reg('agentDock.fsPaste', async (node: FsEntryNode | FolderNode) => {
+    const dir = targetDirUri(node);
+    if (!dir || !copyClipboard || copyClipboard.kind !== 'local') {
+      vscode.window.showWarningMessage(t('Nothing copied yet'));
+      return;
+    }
+    const target = vscode.Uri.joinPath(dir, copyClipboard.name);
+    try {
+      await vscode.workspace.fs.stat(target);
+      const ok = await vscode.window.showWarningMessage(
+        t('{0} already exists. Overwrite?', copyClipboard.name),
+        { modal: true },
+        t('Overwrite'),
+      );
+      if (!ok) {
+        return;
+      }
+    } catch {
+      // 目标不存在：正常粘贴
+    }
+    try {
+      await vscode.workspace.fs.copy(copyClipboard.uri, target, { overwrite: true });
+      provider.refreshFs();
+      vscode.window.setStatusBarMessage(t('Pasted {0}', copyClipboard.name), 3000);
+    } catch (err) {
+      vscode.window.showErrorMessage(t('Failed to paste {0}: {1}', copyClipboard.name, String(err)));
     }
   });
 
@@ -574,7 +634,11 @@ export function registerCommands(context: vscode.ExtensionContext, provider: Wor
   reg('agentDock.fsOpenTerminal', (node: FsEntryNode | FolderNode) => {
     const dir = targetDirUri(node);
     if (dir) {
-      vscode.window.createTerminal({ cwd: dir.fsPath }).show();
+      // 原生终端（TerminalOptions）：VSCode persistent sessions 恢复终端本身，但 process revive
+      // （完全重启）时名字回落到创建名——交由 trackNativeTerminal 记录并在 reload 后重放名字
+      const term = vscode.window.createTerminal({ name: pathBasename(dir.fsPath) || dir.fsPath, cwd: dir.fsPath });
+      trackNativeTerminal(term, dir.fsPath);
+      term.show();
     }
   });
 
@@ -602,7 +666,11 @@ export function registerCommands(context: vscode.ExtensionContext, provider: Wor
       }
       const name = `new: ${picked} · ${pathBasename(node.path)}`;
       if (currentNeedsSsh()) {
-        openClientTerminal({ name, spec: sshSpawnSpec(server, `cd ${shq(node.path)} && ${cli}`) });
+        openClientTerminal({
+          name,
+          spec: sshSpawnSpec(server, `cd ${shq(node.path)} && ${cli}`),
+          persist: { name, kind: 'ssh', serverName: server.name, remoteCommand: `cd ${shq(node.path)} && ${cli}` },
+        });
         return;
       }
       const port = server.port ? `-p ${server.port} ` : '';
@@ -739,11 +807,217 @@ export function registerCommands(context: vscode.ExtensionContext, provider: Wor
     vscode.window.setStatusBarMessage(t('Refreshed {0}', node.name), 3000);
   });
 
-  /** 右键远程目录「刷新」：清缓存重列该目录并重绘树。 */
-  reg('agentDock.remoteFsRefreshDir', async (node: RemoteFsEntryNode) => {
-    if (node?.kind !== 'remoteFsEntry' || !node.isDir) {
+  /** 右键远程目录「刷新」：清缓存重列该目录并重绘树。同时支持已 pin 的远程文件夹节点与本地 workspace 文件夹。 */
+  reg('agentDock.remoteFsRefreshDir', async (node: RemoteFsEntryNode | FolderNode) => {
+    if (!node) {
       return;
     }
-    await provider.refreshRemoteDir(node.serverKey, node.path);
+    if (node.kind === 'remoteFsEntry' && node.isDir) {
+      await provider.refreshRemoteDir(node.serverKey, node.path);
+      return;
+    }
+    if (node.kind === 'folder') {
+      if (node.workspaceUri) {
+        // folder.workspace：本地 workspace 文件夹，重读目录并重绘
+        provider.refreshFs();
+      } else {
+        // folder.remote：远程服务器的 pin 目录
+        await provider.refreshRemoteDir(node.serverKey, node.path);
+      }
+    }
+  });
+
+  /** 远端路径的父目录（路径本身是 / 时返回 / ）。 */
+  const remoteParentPath = (path: string): string => {
+    const idx = path.lastIndexOf('/');
+    return idx <= 0 ? '/' : path.slice(0, idx);
+  };
+
+  /** 解析远程目录目标：remoteFsDir 或 folder.remote 都适用。 */
+  const remoteDirTarget = (node: RemoteFsEntryNode | FolderNode | undefined): { serverKey: string; path: string; name: string } | undefined => {
+    if (!node) {
+      return undefined;
+    }
+    if (node.kind === 'remoteFsEntry' && node.isDir) {
+      return { serverKey: node.serverKey, path: node.path, name: node.name };
+    }
+    if (node.kind === 'folder' && !node.workspaceUri) {
+      return { serverKey: node.serverKey, path: node.path, name: node.label };
+    }
+    return undefined;
+  };
+
+  /** 执行一条远程文件操作并刷新指定目录；返回 true 表示成功。 */
+  const runRemoteFsOp = async (
+    serverKey: string,
+    refreshPath: string,
+    script: string,
+    errorMsg: (e: unknown) => string,
+  ): Promise<boolean> => {
+    const server = getServers().find((s) => s.name === serverKey);
+    if (!server) {
+      vscode.window.showErrorMessage(t('Server {0} not found in config', serverKey));
+      return false;
+    }
+    try {
+      const res = await execRemote(server, script, getSshTimeoutMs());
+      if (res.code !== 0) {
+        vscode.window.showErrorMessage(errorMsg(res.stderr.trim() || `exit ${res.code}`));
+        return false;
+      }
+    } catch (err) {
+      vscode.window.showErrorMessage(errorMsg(String(err)));
+      return false;
+    }
+    await provider.refreshRemoteDir(serverKey, refreshPath);
+    return true;
+  };
+
+  /** 在远程目录里新建文件（空文件，同名已存在则直接成功）。 */
+  reg('agentDock.remoteFsNewFile', async (node: RemoteFsEntryNode | FolderNode) => {
+    const target = remoteDirTarget(node);
+    if (!target) {
+      return;
+    }
+    const name = await vscode.window.showInputBox({ prompt: t('New file name') });
+    if (!name) {
+      return;
+    }
+    await runRemoteFsOp(
+      target.serverKey,
+      target.path,
+      `touch -- ${shq(joinRemotePath(target.path, name))}`,
+      (e) => t('Failed to create {0}: {1}', name, String(e)),
+    );
+  });
+
+  /** 在远程目录里新建文件夹。 */
+  reg('agentDock.remoteFsNewFolder', async (node: RemoteFsEntryNode | FolderNode) => {
+    const target = remoteDirTarget(node);
+    if (!target) {
+      return;
+    }
+    const name = await vscode.window.showInputBox({ prompt: t('New folder name') });
+    if (!name) {
+      return;
+    }
+    await runRemoteFsOp(
+      target.serverKey,
+      target.path,
+      `mkdir -p -- ${shq(joinRemotePath(target.path, name))}`,
+      (e) => t('Failed to create {0}: {1}', name, String(e)),
+    );
+  });
+
+  /** 重命名远程文件/目录（ssh mv）。 */
+  reg('agentDock.remoteFsRename', async (node: RemoteFsEntryNode) => {
+    if (node?.kind !== 'remoteFsEntry') {
+      return;
+    }
+    const name =
+      (await vscode.window.showInputBox({ prompt: t('Rename to'), value: node.name }))?.trim() ?? '';
+    if (!name || name === node.name) {
+      return;
+    }
+    const target = joinRemotePath(remoteParentPath(node.path), name);
+    await runRemoteFsOp(node.serverKey, remoteParentPath(node.path), `mv -- ${shq(node.path)} ${shq(target)}`, (e) =>
+      t('Failed to rename {0}: {1}', node.name, String(e)),
+    );
+  });
+
+  /** 删除远程文件/目录（ssh rm，带确认）。 */
+  reg('agentDock.remoteFsDelete', async (node: RemoteFsEntryNode) => {
+    if (node?.kind !== 'remoteFsEntry') {
+      return;
+    }
+    const ok = await vscode.window.showWarningMessage(
+      t('Delete {0}? This cannot be undone.', node.name),
+      { modal: true },
+      t('Delete'),
+    );
+    if (!ok) {
+      return;
+    }
+    const flag = node.isDir ? '-rf' : '-f';
+    await runRemoteFsOp(node.serverKey, remoteParentPath(node.path), `rm ${flag} -- ${shq(node.path)}`, (e) =>
+      t('Failed to delete {0}: {1}', node.name, String(e)),
+    );
+  });
+
+  /** 复制远程文件/目录的完整路径。 */
+  reg('agentDock.remoteFsCopyPath', async (node: RemoteFsEntryNode) => {
+    if (node?.kind !== 'remoteFsEntry') {
+      return;
+    }
+    await vscode.env.clipboard.writeText(node.path);
+    vscode.window.setStatusBarMessage(t('Copied {0}', node.path), 3000);
+  });
+
+  /** 复制远程文件/目录到扩展内剪贴板（配合「粘贴」使用）。 */
+  reg('agentDock.remoteFsCopy', (node: RemoteFsEntryNode) => {
+    if (node?.kind !== 'remoteFsEntry') {
+      return;
+    }
+    copyClipboard = { kind: 'remote', serverKey: node.serverKey, path: node.path, name: node.name, isDir: node.isDir };
+    vscode.window.setStatusBarMessage(t('Copied {0}', node.name), 3000);
+  });
+
+  /** 把剪贴板里的远程条目粘贴到目标远程目录（remoteFsDir 或 folder.remote）。 */
+  reg('agentDock.remoteFsPaste', async (node: RemoteFsEntryNode | FolderNode) => {
+    const target = remoteDirTarget(node);
+    if (!target) {
+      return;
+    }
+    if (!copyClipboard || copyClipboard.kind !== 'remote') {
+      vscode.window.showWarningMessage(t('Nothing copied yet'));
+      return;
+    }
+    if (copyClipboard.serverKey !== target.serverKey) {
+      vscode.window.showWarningMessage(t('Cannot paste across servers'));
+      return;
+    }
+    const server = getServers().find((s) => s.name === target.serverKey);
+    if (!server) {
+      return;
+    }
+    const dest = joinRemotePath(target.path, copyClipboard.name);
+    // 目标已存在时先询问是否覆盖（cp 默认直接覆盖）
+    const check = await execRemote(server, `[ -e ${shq(dest)} ] && echo EXISTS || echo ABSENT`, 10_000, { quiet: true });
+    if (check.stdout.trim() === 'EXISTS') {
+      const overwrite = await vscode.window.showWarningMessage(
+        t('{0} already exists. Overwrite?', copyClipboard.name),
+        { modal: true },
+        t('Overwrite'),
+      );
+      if (!overwrite) {
+        return;
+      }
+    }
+    const flag = copyClipboard.isDir ? '-r' : '';
+    const done = await runRemoteFsOp(
+      target.serverKey,
+      target.path,
+      `cp ${flag} -- ${shq(copyClipboard.path)} ${shq(dest)}`,
+      (e) => t('Failed to paste {0}: {1}', copyClipboard!.name, String(e)),
+    );
+    if (done) {
+      vscode.window.setStatusBarMessage(t('Pasted {0}', copyClipboard.name), 3000);
+    }
+  });
+
+  /** 在远程目录打开客户端 ssh 终端。 */
+  reg('agentDock.remoteFsOpenTerminal', (node: RemoteFsEntryNode | FolderNode) => {
+    const target = remoteDirTarget(node);
+    if (!target) {
+      return;
+    }
+    const server = getServers().find((s) => s.name === target.serverKey);
+    if (!server) {
+      vscode.window.showErrorMessage(t('Server {0} not found in config', target.serverKey));
+      return;
+    }
+    const name = `ssh: ${server.name} · ${target.name}`;
+    const remoteCommand = `cd ${shq(target.path)} && exec "$SHELL" -l`;
+    openClientTerminal({ name, spec: sshSpawnSpec(server, remoteCommand), persist: { name, kind: 'ssh', serverName: server.name, remoteCommand } });
   });
 }

@@ -195,6 +195,7 @@ export class RemoteFsProvider implements vscode.FileSystemProvider {
               server,
               buildPollScript(ws.map((w) => ({ path: w.uri.path, isDir: w.isDir }))),
               15_000,
+              { quiet: true },
             );
             if (res.code !== 0) {
               return; // 瞬时失败：下一轮再试

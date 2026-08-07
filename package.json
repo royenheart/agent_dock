@@ -3,7 +3,7 @@
   "displayName": "Agent Dock",
   "icon": "media/logo.png",
   "description": "Agent Dock — cross-server AI agent workspace: files of the current server plus opencode / Codex CLI / Claude Code sessions across SSH servers.",
-  "version": "0.1.10",
+  "version": "0.1.11",
   "publisher": "royenheart",
   "license": "MIT",
   "engines": {
@@ -12,7 +12,9 @@
   "categories": [
     "Other"
   ],
-  "activationEvents": [],
+  "activationEvents": [
+    "onStartupFinished"
+  ],
   "extensionKind": [
     "ui",
     "workspace"
@@ -32,14 +34,6 @@
       ]
     },
     "views": {
-      "explorer": [
-        {
-          "id": "agentDock.workspaceExplorer",
-          "name": "%view.container.title%",
-          "icon": "media/icon.svg",
-          "contextualTitle": "Agent Workspace"
-        }
-      ],
       "agentDock": [
         {
           "id": "agentDock.workspace",
@@ -58,10 +52,6 @@
     "viewsWelcome": [
       {
         "view": "agentDock.workspace",
-        "contents": "%welcome.content%"
-      },
-      {
-        "view": "agentDock.workspaceExplorer",
         "contents": "%welcome.content%"
       }
     ],
@@ -261,6 +251,18 @@
         "icon": "$(clippy)"
       },
       {
+        "command": "agentDock.fsCopy",
+        "title": "%cmd.fsCopy%",
+        "category": "Agent Workspace",
+        "icon": "$(copy)"
+      },
+      {
+        "command": "agentDock.fsPaste",
+        "title": "%cmd.fsPaste%",
+        "category": "Agent Workspace",
+        "icon": "$(paste)"
+      },
+      {
         "command": "agentDock.fsCopyRelativePath",
         "title": "%cmd.fsCopyRelativePath%",
         "category": "Agent Workspace",
@@ -355,6 +357,54 @@
         "title": "%cmd.remoteFsRefreshDir%",
         "category": "Agent Workspace",
         "icon": "$(refresh)"
+      },
+      {
+        "command": "agentDock.remoteFsNewFile",
+        "title": "%cmd.remoteFsNewFile%",
+        "category": "Agent Workspace",
+        "icon": "$(new-file)"
+      },
+      {
+        "command": "agentDock.remoteFsNewFolder",
+        "title": "%cmd.remoteFsNewFolder%",
+        "category": "Agent Workspace",
+        "icon": "$(new-folder)"
+      },
+      {
+        "command": "agentDock.remoteFsRename",
+        "title": "%cmd.remoteFsRename%",
+        "category": "Agent Workspace",
+        "icon": "$(edit)"
+      },
+      {
+        "command": "agentDock.remoteFsDelete",
+        "title": "%cmd.remoteFsDelete%",
+        "category": "Agent Workspace",
+        "icon": "$(trash)"
+      },
+      {
+        "command": "agentDock.remoteFsCopyPath",
+        "title": "%cmd.remoteFsCopyPath%",
+        "category": "Agent Workspace",
+        "icon": "$(clippy)"
+      },
+      {
+        "command": "agentDock.remoteFsCopy",
+        "title": "%cmd.remoteFsCopy%",
+        "category": "Agent Workspace",
+        "icon": "$(copy)"
+      },
+      {
+        "command": "agentDock.remoteFsPaste",
+        "title": "%cmd.remoteFsPaste%",
+        "category": "Agent Workspace",
+        "icon": "$(paste)"
+      },
+      {
+        "command": "agentDock.remoteFsOpenTerminal",
+        "title": "%cmd.remoteFsOpenTerminal%",
+        "category": "Agent Workspace",
+        "icon": "$(terminal)"
       }
     ],
     "menus": {
@@ -437,6 +487,16 @@
           "group": "4_copy@1"
         },
         {
+          "command": "agentDock.fsCopy",
+          "when": "view =~ /^agentDock.workspace/ && (viewItem == fsFile || viewItem == fsDir)",
+          "group": "4_copy@0"
+        },
+        {
+          "command": "agentDock.fsPaste",
+          "when": "view =~ /^agentDock.workspace/ && (viewItem == fsDir || viewItem == folder.workspace)",
+          "group": "4_copy@0"
+        },
+        {
           "command": "agentDock.fsCopyRelativePath",
           "when": "view =~ /^agentDock.workspace/ && (viewItem == fsFile || viewItem == fsDir)",
           "group": "4_copy@2"
@@ -490,6 +550,51 @@
           "command": "agentDock.remoteFsRefreshDir",
           "when": "view =~ /^agentDock.workspace/ && viewItem == remoteFsDir",
           "group": "1_refresh@1"
+        },
+        {
+          "command": "agentDock.remoteFsNewFile",
+          "when": "view =~ /^agentDock.workspace/ && (viewItem == remoteFsDir || viewItem == folder.remote)",
+          "group": "2_new@1"
+        },
+        {
+          "command": "agentDock.remoteFsNewFolder",
+          "when": "view =~ /^agentDock.workspace/ && (viewItem == remoteFsDir || viewItem == folder.remote)",
+          "group": "2_new@2"
+        },
+        {
+          "command": "agentDock.remoteFsRename",
+          "when": "view =~ /^agentDock.workspace/ && (viewItem == remoteFsFile || viewItem == remoteFsDir)",
+          "group": "3_modify@1"
+        },
+        {
+          "command": "agentDock.remoteFsDelete",
+          "when": "view =~ /^agentDock.workspace/ && (viewItem == remoteFsFile || viewItem == remoteFsDir)",
+          "group": "3_modify@2"
+        },
+        {
+          "command": "agentDock.remoteFsCopyPath",
+          "when": "view =~ /^agentDock.workspace/ && (viewItem == remoteFsFile || viewItem == remoteFsDir)",
+          "group": "4_copy@1"
+        },
+        {
+          "command": "agentDock.remoteFsCopy",
+          "when": "view =~ /^agentDock.workspace/ && (viewItem == remoteFsFile || viewItem == remoteFsDir)",
+          "group": "4_copy@0"
+        },
+        {
+          "command": "agentDock.remoteFsPaste",
+          "when": "view =~ /^agentDock.workspace/ && (viewItem == remoteFsDir || viewItem == folder.remote)",
+          "group": "4_copy@0"
+        },
+        {
+          "command": "agentDock.remoteFsOpenTerminal",
+          "when": "view =~ /^agentDock.workspace/ && (viewItem == remoteFsDir || viewItem == folder.remote)",
+          "group": "5_terminal@1"
+        },
+        {
+          "command": "agentDock.remoteFsRefreshDir",
+          "when": "view =~ /^agentDock.workspace/ && (viewItem == folder.remote || viewItem == folder.workspace)",
+          "group": "1_refresh@1"
         }
       ]
     }
@@ -507,13 +612,13 @@
     "@types/vscode": "^1.96.0",
     "@vscode/test-electron": "^3.0.0",
     "@vscode/vsce": "^3.9.2",
+    "dompurify": "^3.4.12",
+    "marked": "^18.0.6",
     "mocha": "^11.7.6",
     "typescript": "^5.7.0"
   },
   "l10n": "./l10n",
   "dependencies": {
-    "dompurify": "^3.4.12",
-    "marked": "^18.0.6",
     "node-pty": "^1.2.0-beta.14"
   },
   "repository": {

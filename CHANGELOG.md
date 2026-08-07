@@ -1,3 +1,24 @@
+## v0.1.11 (2026-08-08)
+
+### Fix
+
+- remote fs entries get the full operation set again: new file/folder, rename, delete (with confirm), copy, paste, copy path, open ssh terminal — right-clicking remote files/dirs no longer shows only "refresh file"
+- local workspace files/dirs get copy & paste (vscode.workspace.fs), remote ones via ssh cp, with overwrite confirmation
+- pinned remote folders (`folder.remote`) and local workspace folders (`folder.workspace`) now have a "refresh directory" action
+- remote-dir auto-refresh polling paused when the tree view is hidden and stopped for collapsed dirs (onDidCollapseElement); routine poll ssh calls are quiet (no debug-log spam per poll)
+- client terminals (shell / ssh) are persisted across VSCode restart / window reload and re-created on activation; closing a terminal removes it from the saved set
+- client terminal Ctrl+C works again: the pipe fallback (no node-pty) now forwards `\x03` to pty-wrapped children (script/ssh -tt) and sends SIGINT to plain-pipe shells instead of silently swallowing it; the packaged vsix bundles node-pty prebuilds again so the real-pty path (native Ctrl+C) is used whenever node-pty is available
+- `onStartupFinished` activation: client terminals are restored right after a window reload, without needing to open the Agent Workspace view first
+- active port forwards are persisted to workspaceState and automatically restarted after a window reload (per-server; unreachable servers are skipped and retried on next reload)
+- tree expansion state survives window reload: every node gets a stable `TreeItem.id` (nodeId), the provider implements `getParent` (nodeParent), and `ExpansionState` records expanded nodes (onDidExpand/onDidCollapse) and replays them via `treeView.reveal(node, {expand:true})` after reload/refresh — VSCode does not persist extension tree-view expansion on its own, so this is now self-managed
+- fixed current-server expansion restore: the current server's tree node now always uses `CURRENT_SERVER_KEY` so its id matches what `getParent` derives for folders under it (previously the configured server name was used, breaking reveal for the current server's folders)
+- removed the redundant `agentDock.workspaceExplorer` view from the native Explorer container (kept only the Agent Dock Workspace view — the two were duplicates with unsynchronized state)
+- client terminals keep a user-renamed title across reload: `syncTrackedTerminalName` (on `onDidChangeTerminalState`) writes the current terminal name back to the persisted descriptor; "Open Terminal Here" now passes an explicit `name` so the native persistent-session title is stable
+- client terminals opened from the terminal panel profile dropdown are now persisted too (`onDidOpenTerminal` + pty marker), not only command-opened ones
+- terminal/tree restore now logs at debug: `initClientTerminalPersistence` (saved names, skips, restores), `tracked/untracked/sync name`, `persistTerminals` (counts) — set `agentDock.logLevel=debug` to trace why a terminal or expansion is not restored
+- expansion restore hardened: fsEntry ids are `encodeURIComponent`-encoded (URIs with `:`/`%2B` no longer break `nodeFromId` parsing), and restore retries shallow-first with a pending queue until the lazy tree data is ready (folders under servers that are still scanning no longer fail permanently)
+- vsix slimmed: only node-pty is a runtime `dependency` — dompurify/marked moved to devDependencies (webview uses media/vendor UMD), cutting ~20 MB of unused node_modules from the package
+
 ## v0.1.10 (2026-08-03)
 
 ### Fix

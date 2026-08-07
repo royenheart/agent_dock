@@ -18,6 +18,8 @@
   "cmd.openSettings": "Open Agent Settings",
   "welcome.content": "Expand the current server to browse its files and agent sessions.\n[Add a remote server](command:agentWorkspace.addServer) to browse opencode / Codex / Claude Code sessions on other machines without switching windows.",
   "cmd.fsOpenSide": "Open to the Side",
+  "cmd.fsCopy": "Copy",
+  "cmd.fsPaste": "Paste",
   "cmd.fsCopyPath": "Copy Path",
   "cmd.fsCopyRelativePath": "Copy Relative Path",
   "cmd.fsRevealOS": "Reveal in File Manager",
@@ -38,6 +40,14 @@
   "cmd.portForwardRemove": "Remove Port Forward",
   "cmd.remoteFsRefreshFile": "Refresh File Content",
   "cmd.remoteFsRefreshDir": "Refresh Directory",
+  "cmd.remoteFsNewFile": "New File…",
+  "cmd.remoteFsNewFolder": "New Folder…",
+  "cmd.remoteFsRename": "Rename…",
+  "cmd.remoteFsDelete": "Delete",
+  "cmd.remoteFsCopyPath": "Copy Path",
+  "cmd.remoteFsCopy": "Copy",
+  "cmd.remoteFsPaste": "Paste",
+  "cmd.remoteFsOpenTerminal": "Open Terminal Here",
   "config.remoteAutoRefresh.description": "Automatically poll files/directories of other servers for changes (open editors and the tree update live).",
   "config.remoteWatchIntervalSeconds.description": "How often (in seconds) remote files/directories of other servers are polled for changes."
 }

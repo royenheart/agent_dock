@@ -36,6 +36,8 @@ export interface ExecOptions {
   signal?: AbortSignal;
   /** stdout 累计上限（字节），超过即 kill 子进程并以 truncated 返回。 */
   maxOutputBytes?: number;
+  /** 周期轮询等高频静默调用：成功时跳过 debug 日志，仅在失败/超时/取消时记录。 */
+  quiet?: boolean;
 }
 
 /** stdout 默认累计上限：防止失控远端脚本/大文件刷爆扩展宿主内存。 */
@@ -258,9 +260,15 @@ export async function execRemote(
   }
   const started = Date.now();
   try {
-    slog.debug(`#${id} → ${dest} ← ${scriptSummary(script)}`, { argv: `ssh ${args.join(' ')}`, scriptBytes: script.length, queueMs: started - enqueued || undefined });
+    if (!opts?.quiet) {
+      slog.debug(`#${id} → ${dest} ← ${scriptSummary(script)}`, { argv: `ssh ${args.join(' ')}`, scriptBytes: script.length, queueMs: started - enqueued || undefined });
+    }
     const res = await spawnCollect('ssh', args, script, timeoutMs, opts?.signal, opts?.maxOutputBytes).catch((e) => logSpawnError(id, dest, e));
-    logResult(id, dest, res, Date.now() - started);
+    if (!opts?.quiet) {
+      logResult(id, dest, res, Date.now() - started);
+    } else if (res.cancelled || res.timedOut || res.code !== 0) {
+      logResult(id, dest, res, Date.now() - started);
+    }
     return { ...res, stdout: res.stdout.toString('utf8') };
   } finally {
     sshSemaphore.release();
@@ -287,9 +295,15 @@ export async function execRemoteBuffer(
   }
   const started = Date.now();
   try {
-    slog.debug(`#${id} → ${sshDestination(server)} ← ${scriptSummary(script)} (binary)`, { queueMs: started - enqueued || undefined });
+    if (!opts?.quiet) {
+      slog.debug(`#${id} → ${sshDestination(server)} ← ${scriptSummary(script)} (binary)`, { queueMs: started - enqueued || undefined });
+    }
     const res = await spawnCollect('ssh', args, script, timeoutMs, opts?.signal, opts?.maxOutputBytes).catch((e) => logSpawnError(id, sshDestination(server), e));
-    logResult(id, sshDestination(server), res, Date.now() - started);
+    if (!opts?.quiet) {
+      logResult(id, sshDestination(server), res, Date.now() - started);
+    } else if (res.cancelled || res.timedOut || res.code !== 0) {
+      logResult(id, sshDestination(server), res, Date.now() - started);
+    }
     return res;
   } finally {
     sshSemaphore.release();

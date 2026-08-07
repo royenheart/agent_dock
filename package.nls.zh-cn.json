@@ -18,6 +18,8 @@
   "cmd.openSettings": "打开 Agent 设置",
   "welcome.content": "展开「当前」节点查看本机/当前服务器的文件与 agent 会话。\n[添加远程服务器](command:agentWorkspace.addServer) 后，无需切换窗口即可浏览其他服务器的 opencode / Codex / Claude Code 会话。",
   "cmd.fsOpenSide": "在侧边打开",
+  "cmd.fsCopy": "复制",
+  "cmd.fsPaste": "粘贴",
   "cmd.fsCopyPath": "复制路径",
   "cmd.fsCopyRelativePath": "复制相对路径",
   "cmd.fsRevealOS": "在文件管理器中显示",
@@ -38,6 +40,14 @@
   "cmd.portForwardRemove": "移除端口转发",
   "cmd.remoteFsRefreshFile": "刷新文件内容",
   "cmd.remoteFsRefreshDir": "刷新目录",
+  "cmd.remoteFsNewFile": "新建文件…",
+  "cmd.remoteFsNewFolder": "新建文件夹…",
+  "cmd.remoteFsRename": "重命名…",
+  "cmd.remoteFsDelete": "删除",
+  "cmd.remoteFsCopyPath": "复制路径",
+  "cmd.remoteFsCopy": "复制",
+  "cmd.remoteFsPaste": "粘贴",
+  "cmd.remoteFsOpenTerminal": "在此处打开终端",
   "config.remoteAutoRefresh.description": "自动轮询其他服务器上文件/目录的变化（已打开的编辑器与目录树实时更新）。",
   "config.remoteWatchIntervalSeconds.description": "轮询其他服务器文件/目录变化的间隔（秒）。"
 }

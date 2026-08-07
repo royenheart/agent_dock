@@ -32,10 +32,12 @@
 
 ## 使用
 
-1. `npm install && npm run compile`，VS Code 中 `F5` 调试，或安装打包好的 `.vsix`（`npx @vscode/vsce package`）
+1. 安装打包好的 `.vsix`（VS Code 扩展面板 → `...` → Install from VSIX），或从 Marketplace 安装
 2. 树标题栏「+」添加目录/服务器；服务器列表保存于客户端用户级 `settings.json` 的 `agentDock.servers`（**跨窗口、跨服务器一致**）
 
 > 更新扩展后需 `Developer: Reload Window`。连接远程服务器需要 Remote-SSH 扩展与 ssh 密钥免密。
+
+开发者编译/打包/测试流程见 [docs/dev.md](docs/dev.md)。
 
 ## 依赖
 
@@ -52,11 +54,6 @@
 | `agentDock.sshTimeoutSeconds` | `20` | 单次 SSH 远程操作超时（秒，5–120） |
 | `agentDock.sshConnectionPersist` | `8h` | SSH 主连接复用保持时长（`10m`/`8h`/`yes` 不限，`0` 禁用） |
 | `agentDock.logLevel` | `info` | 「Agent Dock」输出通道日志级别（debug/info/warn/error） |
-
-## 测试
-
-- `npm run test:unit` — 纯逻辑单测（node:test）：路径匹配、会话解析、transcript、ssh config、settings 聚合
-- `npm run test:e2e` — `@vscode/test-electron` + xvfb：真实 VS Code 中验证树结构、symlink cwd 匹配、文件命令、transcript、ssh config
 
 ## License
 

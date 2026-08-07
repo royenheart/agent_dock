@@ -32,6 +32,134 @@ export type Node =
   | { kind: 'portForward'; serverKey: string; forward: PortForward; service?: string; parent?: Node }
   | { kind: 'info'; label: string; severity: 'info' | 'warning' | 'error' | 'loading'; tooltip?: string };
 
+/**
+ * 每个节点的稳定唯一 id（跨 reload 不变）。VSCode 用 TreeItem.id 保留展开/选中状态，
+ * 未提供时按 label 生成——label 一变状态就丢；这里显式给出与内容绑定的 id。
+ */
+export function nodeId(node: Node): string {
+  switch (node.kind) {
+    case 'server':
+      return `server:${node.key}`;
+    case 'folder':
+      return `folder:${node.serverKey}:${node.path}`;
+    case 'otherSessions':
+      return `otherSessions:${node.serverKey}`;
+    case 'sessionsRoot':
+      return `sessionsRoot:${node.serverKey}:${node.folderPath}`;
+    case 'session':
+      return `session:${node.serverKey}:${node.session.id}`;
+    case 'fsEntry':
+      // 整个 uri.toString() 做 encodeURIComponent：nodeFromId 还原时保证与
+      // joinPath 生成的原始字符串完全一致（避免 Uri.parse 的编码规范化导致 handle 失配）
+      return `fs:${encodeURIComponent(node.uri.toString())}`;
+    case 'remoteFsEntry':
+      return `remoteFs:${node.serverKey}:${node.path}`;
+    case 'portsRoot':
+      return `portsRoot:${node.serverKey}`;
+    case 'portForward':
+      return `portForward:${node.serverKey}:${forwardSpecId(node.forward)}`;
+    case 'info':
+      return `info:${node.label}:${node.severity}`;
+  }
+}
+
+function forwardSpecId(f: PortForward): string {
+  return `${f.localPort}:${f.remoteHost ?? 'localhost'}:${f.remotePort}`;
+}
+
+/**
+ * 从 nodeId 反解出最小 Node 对象（供 reveal 恢复展开状态用）。
+ * nodeId 是稳定的，但可能含 ':' —— 用前缀 + 定界解析。
+ */
+export function nodeFromId(id: string): Node | undefined {
+  const [kind, ...rest] = id.split(':');
+  switch (kind) {
+    case 'server':
+      return { kind: 'server', key: rest.join(':'), label: rest.join(':'), isCurrent: rest.join(':') === CURRENT_SERVER_KEY };
+    case 'folder':
+      return { kind: 'folder', serverKey: rest[0], path: rest.slice(1).join(':'), label: pathBasename(rest.slice(1).join(':')) };
+    case 'otherSessions':
+      return { kind: 'otherSessions', serverKey: rest.join(':') };
+    case 'sessionsRoot':
+      return { kind: 'sessionsRoot', serverKey: rest[0], folderPath: rest.slice(1).join(':') };
+    case 'remoteFs':
+      return { kind: 'remoteFsEntry', serverKey: rest[0], path: rest.slice(1).join(':'), name: pathBasename(rest.slice(1).join(':')), isDir: true };
+    case 'fs': {
+      // id 里 fs 段是 encodeURIComponent 后的完整 uri.toString()，原样还原
+      const uriStr = decodeURIComponent(rest.join(':'));
+      const uri = vscode.Uri.parse(uriStr);
+      return { kind: 'fsEntry', uri, name: pathBasename(uriFsPath(uri)), isDir: true };
+    }
+    case 'portsRoot':
+      return { kind: 'portsRoot', serverKey: rest.join(':') };
+    default:
+      return undefined;
+  }
+}
+
+/** 从节点自身推导父节点（getParent 用；父节点只需携带足够的 id 信息供 getTreeItem 渲染）。 */
+export function nodeParent(node: Node): Node | undefined {
+  switch (node.kind) {
+    case 'server':
+      return undefined;
+    case 'folder':
+      return {
+        kind: 'server',
+        key: node.serverKey,
+        label: node.serverKey === CURRENT_SERVER_KEY ? t('Current server') : node.serverKey,
+        isCurrent: node.serverKey === CURRENT_SERVER_KEY,
+      };
+    case 'otherSessions':
+      return { kind: 'server', key: node.serverKey, label: node.serverKey, isCurrent: node.serverKey === CURRENT_SERVER_KEY };
+    case 'sessionsRoot':
+      return { kind: 'folder', serverKey: node.serverKey, path: node.folderPath, label: pathBasename(node.folderPath) || node.folderPath };
+    case 'session': {
+      if (node.session.parentId) {
+        return {
+          kind: 'session',
+          serverKey: node.serverKey,
+          session: { ...node.session, id: node.session.parentId, title: '', cwd: node.session.cwd },
+        };
+      }
+      return { kind: 'sessionsRoot', serverKey: node.serverKey, folderPath: node.session.cwd ?? node.serverKey };
+    }
+    case 'fsEntry': {
+      const parentUri = vscode.Uri.joinPath(node.uri, '..');
+      const wsFolder = vscode.workspace.workspaceFolders?.find((f) => f.uri.toString() === parentUri.toString());
+      if (wsFolder) {
+        return {
+          kind: 'folder',
+          serverKey: CURRENT_SERVER_KEY,
+          path: uriFsPath(parentUri),
+          label: pathBasename(uriFsPath(parentUri)),
+          workspaceUri: parentUri,
+        };
+      }
+      return { kind: 'fsEntry', uri: parentUri, name: pathBasename(uriFsPath(parentUri)), isDir: true };
+    }
+    case 'remoteFsEntry': {
+      const parentPath = remoteParentOf(node.path);
+      if (parentPath === undefined) {
+        // 已在远程目录顶层：父是 pin 的 folder 节点（serverKey + 根路径）
+        return { kind: 'folder', serverKey: node.serverKey, path: node.path, label: pathBasename(node.path) || node.path };
+      }
+      return { kind: 'remoteFsEntry', serverKey: node.serverKey, path: parentPath, name: pathBasename(parentPath), isDir: true };
+    }
+    case 'portsRoot':
+      return { kind: 'server', key: node.serverKey, label: node.serverKey, isCurrent: node.serverKey === CURRENT_SERVER_KEY };
+    case 'portForward':
+      return { kind: 'portsRoot', serverKey: node.serverKey };
+    case 'info':
+      return undefined;
+  }
+}
+
+/** 远程路径的父目录（根路径返回 undefined 表示已是顶层，父为 folder 节点）。 */
+function remoteParentOf(path: string): string | undefined {
+  const idx = path.lastIndexOf('/');
+  return idx <= 0 ? undefined : path.slice(0, idx);
+}
+
 const AGENT_ICON: Record<AgentKind, string> = {
   opencode: 'zap',
   codex: 'hubot',
@@ -270,6 +398,7 @@ export class WorkspaceProvider implements vscode.TreeDataProvider<Node> {
         item.tooltip = node.server
           ? `${node.server.user ? `${node.server.user}@` : ''}${node.server.host}${node.server.port ? `:${node.server.port}` : ''}`
           : node.label;
+        item.id = nodeId(node);
         return item;
       }
       case 'folder': {
@@ -277,12 +406,14 @@ export class WorkspaceProvider implements vscode.TreeDataProvider<Node> {
         item.iconPath = new vscode.ThemeIcon('folder');
         item.contextValue = node.workspaceUri ? 'folder.workspace' : 'folder.remote';
         item.tooltip = node.path;
+        item.id = nodeId(node);
         return item;
       }
       case 'sessionsRoot': {
         const item = new vscode.TreeItem('sessions', vscode.TreeItemCollapsibleState.Collapsed);
         item.iconPath = new vscode.ThemeIcon('comment-discussion');
         item.contextValue = 'sessionsRoot';
+        item.id = nodeId(node);
         return item;
       }
       case 'otherSessions': {
@@ -290,6 +421,7 @@ export class WorkspaceProvider implements vscode.TreeDataProvider<Node> {
         item.iconPath = new vscode.ThemeIcon('history');
         item.contextValue = 'otherSessions';
         item.tooltip = t('Sessions whose working directory is not under any workspace folder');
+        item.id = nodeId(node);
         return item;
       }
       case 'session': {
@@ -309,6 +441,7 @@ export class WorkspaceProvider implements vscode.TreeDataProvider<Node> {
           title: 'Open Transcript',
           arguments: [node],
         };
+        item.id = nodeId(node);
         return item;
       }
       case 'fsEntry': {
@@ -326,6 +459,7 @@ export class WorkspaceProvider implements vscode.TreeDataProvider<Node> {
             arguments: [node.uri],
           };
         }
+        item.id = nodeId(node);
         return item;
       }
       case 'remoteFsEntry': {
@@ -341,6 +475,7 @@ export class WorkspaceProvider implements vscode.TreeDataProvider<Node> {
           item.resourceUri = uri;
           item.command = { command: 'vscode.open', title: 'Open File', arguments: [uri] };
         }
+        item.id = nodeId(node);
         return item;
       }
       case 'portsRoot': {
@@ -348,6 +483,7 @@ export class WorkspaceProvider implements vscode.TreeDataProvider<Node> {
         item.iconPath = new vscode.ThemeIcon('plug');
         item.contextValue = 'portsRoot';
         item.tooltip = t('SSH local port forwarding via {0}', node.serverKey);
+        item.id = nodeId(node);
         return item;
       }
       case 'portForward': {
@@ -370,6 +506,7 @@ export class WorkspaceProvider implements vscode.TreeDataProvider<Node> {
           md.appendMarkdown(`- ${t('Service')}: \`${node.service}\`\n`);
         }
         item.tooltip = md;
+        item.id = nodeId(node);
         return item;
       }
       case 'info': {
@@ -385,9 +522,20 @@ export class WorkspaceProvider implements vscode.TreeDataProvider<Node> {
         );
         item.contextValue = 'info';
         item.tooltip = node.tooltip;
+        item.id = nodeId(node);
         return item;
       }
     }
+  }
+
+  /**
+   * 展开状态恢复的基石：VSCode 在 reload 后靠 TreeItem.id + getParent 重建展开路径。
+   * 节点每次 getChildren 都是新对象，必须用稳定 id（nodeId）而非对象身份匹配。
+   */
+  getParent(node: Node): Node | undefined {
+    const p = nodeParent(node);
+    log.child('tree').debug(`getParent ${node.kind} id=${nodeId(node)} -> ${p ? `${p.kind} id=${nodeId(p)}` : 'undefined'}`);
+    return p;
   }
 
   async getChildren(node?: Node): Promise<Node[]> {
@@ -420,11 +568,16 @@ export class WorkspaceProvider implements vscode.TreeDataProvider<Node> {
     const servers = getServers();
     const { current, remotes } = classifyServers(servers);
     const nodes: Node[] = [];
-    if (current) {
-      nodes.push({ kind: 'server', key: current.name, label: current.name, isCurrent: true, server: current });
-    } else {
-      nodes.push({ kind: 'server', key: CURRENT_SERVER_KEY, label: getCurrentDisplayName(), isCurrent: true });
-    }
+    // 当前服务器的 key 恒为 CURRENT_SERVER_KEY：folder/otherSessions/portsRoot 的 serverKey
+    // 都是它，nodeParent 推导的父 server id 才能与树中实际 server 节点一致（reveal 恢复展开状态的前提）
+    const currentServer: Node = {
+      kind: 'server',
+      key: CURRENT_SERVER_KEY,
+      label: current ? current.name : getCurrentDisplayName(),
+      isCurrent: true,
+      server: current,
+    };
+    nodes.push(currentServer);
     for (const s of remotes) {
       nodes.push({ kind: 'server', key: s.name, label: s.name, isCurrent: false, server: s });
     }
@@ -606,10 +759,39 @@ export class WorkspaceProvider implements vscode.TreeDataProvider<Node> {
   private dirMtimes = new Map<string, number>();
   private dirPollTimer?: NodeJS.Timeout;
   private dirPolling = false;
-  /** 展开目录 LRU 上限：折叠目录无法感知（TreeView 不回调），用数量上限兜底内存。 */
+  /** 树视图是否可见：不可见时暂停目录轮询，避免后台无谓的 ssh 流量与日志刷屏。 */
+  private viewVisible = true;
+  /** 展开目录 LRU 上限：折叠目录经 onDidCollapseElement 移除，上限仅作内存兜底。 */
   private static readonly MAX_EXPANDED_DIRS = 1000;
   private readonly persistDirCacheQueue = createSerialQueue();
   private lastPersistedDirCacheJson = '';
+
+  /** 视图可见性变化：不可见立即停表，恢复可见时重新调度（配合 onDidChangeVisibility）。 */
+  setViewVisible(visible: boolean): void {
+    this.viewVisible = visible;
+    if (!visible) {
+      if (this.dirPollTimer) {
+        clearTimeout(this.dirPollTimer);
+        this.dirPollTimer = undefined;
+      }
+    } else {
+      this.ensureDirPolling();
+    }
+  }
+
+  /** 目录被折叠：移出轮询集合，后续不再为其发 stat 请求（TreeView 有 onDidCollapseElement 回调）。 */
+  onCollapse(node: Node): void {
+    let key: string | undefined;
+    if (node.kind === 'remoteFsEntry' && node.isDir) {
+      key = `${node.serverKey}:${node.path}`;
+    } else if (node.kind === 'folder' && !node.workspaceUri) {
+      key = `${node.serverKey}:${node.path}`;
+    }
+    if (key !== undefined) {
+      this.expandedDirs.delete(key);
+      this.dirMtimes.delete(key);
+    }
+  }
 
   private touchExpandedDir(serverKey: string, path: string): void {
     const key = `${serverKey}:${path}`;
@@ -680,7 +862,7 @@ export class WorkspaceProvider implements vscode.TreeDataProvider<Node> {
   }
 
   private ensureDirPolling(): void {
-    if (this.dirPollTimer || this.expandedDirs.size === 0 || !getRemoteAutoRefresh()) {
+    if (this.dirPollTimer || this.expandedDirs.size === 0 || !getRemoteAutoRefresh() || !this.viewVisible) {
       return;
     }
     this.dirPollTimer = setTimeout(() => void this.pollExpandedDirs(), getRemoteWatchIntervalMs());
@@ -695,6 +877,9 @@ export class WorkspaceProvider implements vscode.TreeDataProvider<Node> {
     if (!getRemoteAutoRefresh()) {
       this.expandedDirs.clear();
       return;
+    }
+    if (!this.viewVisible) {
+      return; // 视图不可见：跳过本轮，恢复可见时 ensureDirPolling 重新调度
     }
     this.dirPolling = true;
     try {
@@ -716,7 +901,7 @@ export class WorkspaceProvider implements vscode.TreeDataProvider<Node> {
             const script = g.dirs
               .map((d) => `printf '%s|' ${shq(d.path)}; stat -c '%Y' -- ${shq(d.path)} 2>/dev/null || echo -`)
               .join('\n');
-            const res = await execRemote(server, script, 15_000);
+            const res = await execRemote(server, script, 15_000, { quiet: true });
             if (res.code !== 0) {
               return; // 瞬时失败：下一轮再试
             }
@@ -762,7 +947,7 @@ export class WorkspaceProvider implements vscode.TreeDataProvider<Node> {
       return [{ kind: 'info', label: t('Server not found in config'), severity: 'warning' }];
     }
     const res = quiet
-      ? await execRemote(server, `ls -1Ap --color=never ${shq(path)}`, getSshTimeoutMs())
+      ? await execRemote(server, `ls -1Ap --color=never ${shq(path)}`, getSshTimeoutMs(), { quiet: true })
       : await execRemoteSmart(server, `ls -1Ap --color=never ${shq(path)}`, {
           timeoutMs: getSshTimeoutMs(),
           title: t('Reading {0} on {1}…', path, server.name),

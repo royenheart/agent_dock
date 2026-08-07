@@ -3,6 +3,7 @@ import { spawn, type ChildProcess } from 'node:child_process';
 import * as vscode from 'vscode';
 import type { ServerConfig } from '../model';
 import { buildClientShellSpawn, buildInteractiveSshArgs, buildPtySshArgs, type SpawnSpec, type TermDimensions } from './sshArgs';
+import { getServers } from '../config';
 import { t } from '../i18n';
 import { log } from '../log';
 
@@ -11,10 +12,19 @@ const DEFAULT_DIMS: TermDimensions = { rows: 24, cols: 80 };
 /** 终端打开时才知道初始尺寸与后端类型（真 pty / 管道），spawn 规格用工厂延迟求值。 */
 export type SpawnSpecFactory = (dims: TermDimensions, realPty: boolean) => SpawnSpec;
 
+/**
+ * 客户端 ssh 可执行文件名：node-pty 的 Windows 实现（path_util.cc）在 PATH 里
+ * 只拼文件名、不补 .exe 扩展名，传 'ssh' 会得到 "File not found: "（空路径），
+ * 导致 Windows 上客户端终端永远退回管道模式。这里按平台补全扩展名。
+ */
+function sshExecutable(): string {
+  return process.platform === 'win32' ? 'ssh.exe' : 'ssh';
+}
+
 /** ssh 跳板的 spawn 规格：在客户端直接起 ssh，不经任何本地 shell。 */
 export function sshSpawnSpec(server: ServerConfig, remoteCommand?: string): SpawnSpecFactory {
   return (dims, realPty) => ({
-    file: 'ssh',
+    file: sshExecutable(),
     args: realPty ? buildPtySshArgs(server, remoteCommand) : buildInteractiveSshArgs(server, dims, remoteCommand),
   });
 }
@@ -98,6 +108,8 @@ function toCrlf(s: string): string {
  * 拿不到原生模块时退化为管道 + 本地行缓冲（dumb 模式）。
  */
 class ClientPty implements vscode.Pseudoterminal {
+  /** 标记本 pty 属于 Agent Dock 客户端终端：profile 下拉创建的终端也靠它识别并纳入持久化。 */
+  readonly agentDockPty = true;
   private readonly writeEmitter = new vscode.EventEmitter<string>();
   private readonly closeEmitter = new vscode.EventEmitter<number>();
   readonly onDidWrite = this.writeEmitter.event;
@@ -273,8 +285,22 @@ class ClientPty implements vscode.Pseudoterminal {
         continue;
       }
       if (ch === '\x03') {
+        // Ctrl+C：清空本地行缓冲，并把中断转发给子进程。
+        // - pty 包装的子进程（script(1) / ssh -tt）经 stdin 收到 \x03 后由 tty 行规程生成 SIGINT
+        // - 无 pty 的降级 shell（directShellSpec 等）只能直接向子进程发 SIGINT
         this.lineBuf = [];
         this.writeEmitter.fire('^C\r\n');
+        if (this.child && this.child.exitCode === null) {
+          if (this.dumb && process.platform !== 'win32') {
+            try {
+              this.child.kill('SIGINT');
+            } catch {
+              // 子进程已退出：忽略
+            }
+          } else {
+            this.child.stdin?.write('\x03');
+          }
+        }
         continue;
       }
       if (ch < ' ') {
@@ -301,9 +327,178 @@ export function clientTerminalOptions(name: string, spec?: SpawnSpecFactory): vs
   return { name, pty: new ClientPty(spec ?? clientShellSpec, isShell ? shellFallbackSpec() : undefined) };
 }
 
+// ---------- 终端持久化：窗口/扩展重载后按保存的描述重建 ----------
+
+/** 可持久化的客户端终端描述：重启 VSCode 后据此重建终端。 */
+export interface SavedClientTerminal {
+  name: string;
+  kind: 'shell' | 'ssh';
+  /** kind === 'ssh' 时的服务器名（getServers 里查配置）。 */
+  serverName?: string;
+  /** kind === 'ssh' 时附带执行的远程命令（如 resume/新建会话）。 */
+  remoteCommand?: string;
+}
+
+const TERMINAL_STORE_KEY = 'agentDock.clientTerminals.v1';
+let terminalMemento: vscode.Memento | undefined;
+const liveTerminals = new Map<vscode.Terminal, SavedClientTerminal>();
+
+/**
+ * 窗口 reload 时 VSCode 会以 Shutdown reason 销毁所有扩展 pty 终端（pty 活在扩展宿主里，
+ * 无法重连），并向扩展派发 onDidCloseTerminal。此时若把清空后的列表写回 workspaceState，
+ * 保存的终端描述就被抹掉，reload 后无终端可重建 —— shutdown 期间禁止删记录与落盘。
+ * 残余窗口：close 事件早于 deactivate 超过防抖时长时仍会写入一次，VSCode 不暴露关闭原因，
+ * 无法彻底消除，只能靠防抖缩小 —— 不要"简化"掉这套防护。
+ */
+let shuttingDown = false;
+/** untrack 触发的落盘做防抖：正常关闭 2s 后写入；紧跟着进入 shutdown 则由标记取消。 */
+let untrackPersistTimer: ReturnType<typeof setTimeout> | undefined;
+const UNTRACK_PERSIST_DEBOUNCE_MS = 2000;
+
+/** 扩展 deactivate 时调用：之后的 close 事件与持久化写入一律忽略。 */
+export function markClientTerminalsShuttingDown(): void {
+  shuttingDown = true;
+  if (untrackPersistTimer) {
+    clearTimeout(untrackPersistTimer);
+    untrackPersistTimer = undefined;
+  }
+}
+
+/** 注入持久化存储（workspaceState），并在窗口重载后重建已保存的客户端终端。 */
+export function initClientTerminalPersistence(memento: vscode.Memento): void {
+  terminalMemento = memento;
+  const saved = memento.get<SavedClientTerminal[]>(TERMINAL_STORE_KEY, []);
+  const tlog = log.child('term');
+  tlog.debug(`initClientTerminalPersistence: saved=${saved.length}`, { saved: saved.map((d) => d.name) });
+  // 快照必须在重建循环之前取（且是拷贝）：循环里新建的终端会进入 window.terminals，
+  // 直接查会把后一个同名 saved 条目误判成"已存在"而跳过（同名终端每次 reload 塌缩成一个）
+  const preexisting = [...vscode.window.terminals];
+  for (const d of saved) {
+    // 扩展宿主 reload（非窗口 reload）时旧终端可能仍存活，按名去重避免重复；
+    // 只认 agent-dock pty 终端——同名的原生终端（如 fsOpenTerminal 恢复的）不得挡路
+    const survivor = preexisting.find((t) => t.name === d.name && isAgentDockTerminal(t));
+    if (survivor) {
+      tlog.debug(`skip restoring "${d.name}": a terminal with that name already exists`);
+      // 存活终端不在本进程的 liveTerminals 里：补记，否则它的 rename/close 都同步不到
+      liveTerminals.set(survivor, d);
+      continue;
+    }
+    const term = createTerminalFromSaved(d);
+    if (term) {
+      liveTerminals.set(term, d);
+      term.show(true); // 恢复到终端面板，但不抢编辑器焦点
+      tlog.debug(`restored terminal "${d.name}" kind=${d.kind} server=${d.serverName ?? '-'}`);
+    }
+  }
+  if (liveTerminals.size > 0) {
+    tlog.info(`restored ${liveTerminals.size} client terminal(s) from previous session`);
+  } else if (saved.length > 0) {
+    tlog.info(`no client terminal restored (${saved.length} saved, none rebuilt)`);
+  } else {
+    tlog.debug('no saved client terminals to restore');
+  }
+}
+
+function createTerminalFromSaved(d: SavedClientTerminal): vscode.Terminal | undefined {
+  if (d.kind === 'ssh' && d.serverName) {
+    const server = getServers().find((s) => s.name === d.serverName);
+    if (!server) {
+      log.child('term').warn(`skip restoring terminal "${d.name}": server "${d.serverName}" not in config`);
+      return undefined;
+    }
+    return vscode.window.createTerminal(clientTerminalOptions(d.name, sshSpawnSpec(server, d.remoteCommand)));
+  }
+  return vscode.window.createTerminal(clientTerminalOptions(d.name));
+}
+
+function persistTerminals(): void {
+  if (shuttingDown) {
+    return;
+  }
+  if (!terminalMemento) {
+    log.child('term').debug('persistTerminals skipped: no memento (initClientTerminalPersistence not called?)');
+    return;
+  }
+  log.child('term').debug(`persistTerminals: writing ${liveTerminals.size} terminal(s)`, {
+    names: [...liveTerminals.values()].map((d) => d.name),
+  });
+  terminalMemento.update(TERMINAL_STORE_KEY, [...liveTerminals.values()]).then(
+    () => {},
+    (err: unknown) => log.child('term').warn(`terminal persistence failed: ${String(err)}`),
+  );
+}
+
+/** 记录一个应持久化的客户端终端（打开时调用）。 */
+export function trackClientTerminal(term: vscode.Terminal, d: SavedClientTerminal): void {
+  liveTerminals.set(term, d);
+  log.child('term').debug(`tracked terminal "${d.name}" kind=${d.kind} server=${d.serverName ?? '-'}`);
+  persistTerminals();
+}
+
+/** 终端被用户关闭时移除持久化记录。 */
+export function untrackClientTerminal(term: vscode.Terminal): void {
+  if (shuttingDown) {
+    return;
+  }
+  if (liveTerminals.delete(term)) {
+    log.child('term').debug(`untracked terminal "${term.name}"`);
+    if (untrackPersistTimer) {
+      clearTimeout(untrackPersistTimer);
+    }
+    untrackPersistTimer = setTimeout(() => {
+      untrackPersistTimer = undefined;
+      persistTerminals();
+    }, UNTRACK_PERSIST_DEBOUNCE_MS);
+  }
+}
+
+/**
+ * 同步终端的当前显示名到持久化描述：VSCode 会因用户 rename 或 shell 标题变化
+ * 更新 terminal.name（主进程通过 $acceptTerminalTitleChange 推送，onDidChangeTerminalState
+ * 会触发）。不监听的话 reload 后重建用的是创建时的名字，用户 rename 过的名字会丢。
+ */
+export function syncTrackedTerminalName(term: vscode.Terminal): void {
+  const d = liveTerminals.get(term);
+  if (!d) {
+    return;
+  }
+  if (!term.name) {
+    log.child('term').debug(`sync name: "${d.name}" -> (empty, ignored)`);
+    return;
+  }
+  if (d.name === term.name) {
+    return;
+  }
+  log.child('term').debug(`sync name: "${d.name}" -> "${term.name}"`);
+  d.name = term.name;
+  persistTerminals();
+}
+
 /** 打开一个运行在客户端机器上的终端；不传 spec 时开客户端本机 shell。 */
-export function openClientTerminal(opts: { name: string; spec?: SpawnSpecFactory }): vscode.Terminal {
+export function openClientTerminal(opts: {
+  name: string;
+  spec?: SpawnSpecFactory;
+  /** 提供后该终端会在 VSCode 重启/窗口重载后自动重建。 */
+  persist?: SavedClientTerminal;
+}): vscode.Terminal {
   const term = vscode.window.createTerminal(clientTerminalOptions(opts.name, opts.spec));
+  if (opts.persist) {
+    trackClientTerminal(term, opts.persist);
+  }
   term.show();
   return term;
+}
+
+/**
+ * 判断一个已打开的终端是否是 Agent Dock 客户端终端（profile 下拉创建的也命中）。
+ * 用于 onDidOpenTerminal：profile 路径没有 track 调用，需要在这里补记。
+ */
+export function isAgentDockTerminal(term: vscode.Terminal): boolean {
+  const opts = term.creationOptions;
+  return !!(opts && 'pty' in opts && (opts as vscode.ExtensionTerminalOptions).pty instanceof ClientPty);
+}
+
+/** 该终端是否已在持久化跟踪列表中（避免 profile 补记覆盖 restore 的 ssh 描述）。 */
+export function isTrackedTerminal(term: vscode.Terminal): boolean {
+  return liveTerminals.has(term);
 }
