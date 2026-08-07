@@ -624,6 +624,8 @@
     "test": "npm run test:unit",
     "test:unit": "node --test \"test/unit/*.test.js\"",
     "test:e2e": "xvfb-run -a node test/e2e/runTest.js",
+    "test:e2e:reload:phase1": "AGENTWS_RELOAD_PHASE=1 xvfb-run -a node test/e2e/runTest.js",
+    "test:e2e:reload:phase2": "AGENTWS_RELOAD_PHASE=2 xvfb-run -a node test/e2e/runTest.js",
     "vscode:prepublish": "npm run compile"
   },
   "devDependencies": {

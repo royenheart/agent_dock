@@ -40,10 +40,23 @@ unzip -l agent-dock-*.vsix | grep "prebuilds/.*\.node"   # 期望 8 个平台二
 
 ```bash
 npm run test:unit    # 纯逻辑单测（node:test）：路径匹配、会话解析、transcript、ssh config、known_hosts、settings 聚合
-npm run test:e2e     # @vscode/test-electron + xvfb：真实 VS Code 中验证树结构、文件命令、transcript 等
+npm run test:e2e     # @vscode/test-electron + xvfb：真实 VS Code 中验证树结构、文件命令、菜单完整性、transcript 等
 ```
 
-改动后至少跑 `npm run test:unit`（当前 123 项，全绿才算完成）。
+改动后至少跑 `npm run test:unit`（当前 128 项，全绿才算完成）。
+
+### 跨窗口 reload 恢复 e2e（目录展开状态 / 终端重建，两阶段）
+
+对应历史缺陷：reload 后目录展开状态重置、客户端终端不恢复名字/不重建。用**同一个 user-data-dir 开两个窗口**验证恢复：
+
+```bash
+npm run test:e2e:reload:phase1   # 窗口1：展开目录 + 建客户端/原生终端 + 写状态 + 优雅退出
+npm run test:e2e:reload:phase2   # 窗口2：断言展开状态/终端跨窗口恢复（复用 phase1 的 user-data）
+```
+
+- phase1 同时做「模拟 reload」断言（用真实 workspaceState 新建 ExpansionState 再 init）与持久化断言（clientTerminals/nativeTerminals/expandedNodes 已写入）
+- phase2 先探测 phase1 是否真正落盘（state.vscdb）：正常 VSCode 环境走**强断言**（展开状态 + 终端重建）；若测试环境不写 state.vscdb（headless 下会出现）则降级为「新窗口正常启动 + 树可达」并打印 SKIP 说明，恢复路径已由 phase1 模拟 reload 覆盖
+- 依赖：phase1 与 phase2 之间的 user-data 必须保留（`runTest.js` 在 phase2 自动置 `AGENTWS_KEEP_USER_DATA=1`；fixture 目录不能落在会被清空的临时区，沙箱单命令内跑两阶段）
 
 ### 其他服务器（远程文件/传输层）的 e2e —— 本地 sshd 沙箱，禁止连个人服务器
 

@@ -35,6 +35,11 @@ export class ExpansionState {
     }
   }
 
+  /** 当前记录的已展开节点 id 集合（只读查询；e2e 跨窗口验证恢复用）。 */
+  get ids(): string[] {
+    return [...this.expanded];
+  }
+
   /** 用户在界面上展开了某节点。 */
   onExpand(node: Node): void {
     const id = nodeId(node);

@@ -186,4 +186,135 @@ suite('agent-workspace e2e', () => {
     assert.equal(hosts[0].user, 'tester');
     assert.equal(hosts[0].port, 2222);
   });
+
+  /* ---- 右键菜单完整性（防回退：历史缺陷「只剩刷新文件」） ---- */
+
+  /** 提取 view/item/context 菜单里匹配某 viewItem 的命令集合。 */
+  function cmdsFor(viewItem) {
+    const pkg = vscode.extensions.getExtension('royenheart.agent-dock').packageJSON;
+    const menus = pkg.contributes.menus['view/item/context'];
+    return new Set(
+      menus
+        .filter((m) => {
+          const when = m.when || '';
+          return (
+            when.includes(`viewItem == ${viewItem}`) ||
+            when.includes(`viewItem =~ /^${viewItem}/`)
+          );
+        })
+        .map((m) => m.command),
+    );
+  }
+
+  /** package.json 菜单引用的全部 viewItem 值。 */
+  function declaredViewItems() {
+    const pkg = vscode.extensions.getExtension('royenheart.agent-dock').packageJSON;
+    const menus = pkg.contributes.menus['view/item/context'];
+    const out = new Set();
+    for (const m of menus) {
+      for (const hit of (m.when || '').matchAll(/viewItem\s*(?:==|=\s*~)\s*(\^?)([A-Za-z.]+)/g)) {
+        out.add(hit[1] ? hit[2] : hit[2]);
+      }
+    }
+    return out;
+  }
+
+  test('context menus: remote fs nodes keep the full operation set', () => {
+    // 远程 fs 目录：新建文件/文件夹、重命名、删除、复制、粘贴、复制路径、刷新目录、打开终端
+    for (const c of [
+      'agentDock.remoteFsNewFile',
+      'agentDock.remoteFsNewFolder',
+      'agentDock.remoteFsRename',
+      'agentDock.remoteFsDelete',
+      'agentDock.remoteFsCopy',
+      'agentDock.remoteFsPaste',
+      'agentDock.remoteFsCopyPath',
+      'agentDock.remoteFsRefreshDir',
+      'agentDock.remoteFsOpenTerminal',
+    ]) {
+      assert.ok(cmdsFor('remoteFsDir').has(c), `remoteFsDir menu should contain ${c}`);
+    }
+    // 远程 fs 文件：刷新文件、重命名、删除、复制、复制路径
+    for (const c of [
+      'agentDock.remoteFsRefreshFile',
+      'agentDock.remoteFsRename',
+      'agentDock.remoteFsDelete',
+      'agentDock.remoteFsCopy',
+      'agentDock.remoteFsCopyPath',
+    ]) {
+      assert.ok(cmdsFor('remoteFsFile').has(c), `remoteFsFile menu should contain ${c}`);
+    }
+    // 本地 fs 目录/文件：完整操作集
+    for (const c of [
+      'agentDock.fsNewFile',
+      'agentDock.fsNewFolder',
+      'agentDock.fsRename',
+      'agentDock.fsDelete',
+      'agentDock.fsCopy',
+      'agentDock.fsPaste',
+      'agentDock.fsCopyPath',
+      'agentDock.fsCopyRelativePath',
+      'agentDock.fsRevealOS',
+      'agentDock.fsOpenTerminal',
+    ]) {
+      assert.ok(cmdsFor('fsDir').has(c), `fsDir menu should contain ${c}`);
+    }
+    assert.ok(cmdsFor('fsFile').has('agentDock.fsRename'), 'fsFile menu should contain rename');
+    assert.ok(cmdsFor('fsFile').has('agentDock.fsDelete'), 'fsFile menu should contain delete');
+    // pin 目录（folder.remote / folder.workspace）保留「刷新目录」
+    assert.ok(cmdsFor('folder.remote').has('agentDock.remoteFsRefreshDir'), 'folder.remote should keep refresh dir');
+    assert.ok(cmdsFor('folder.workspace').has('agentDock.remoteFsRefreshDir'), 'folder.workspace should keep refresh dir');
+  });
+
+  test('context menus: getTreeItem contextValue matches declared viewItem (menu sync)', () => {
+    const declared = declaredViewItems();
+    const cases = [
+      { node: { kind: 'server', key: '__current__', label: 'x', isCurrent: true }, expect: 'server.current' },
+      { node: { kind: 'server', key: 's', label: 's', isCurrent: false, server: { name: 's', host: 'h' } }, expect: 'server.remote' },
+      { node: { kind: 'folder', serverKey: '__current__', path: '/x', label: 'x', workspaceUri: vscode.Uri.file('/x') }, expect: 'folder.workspace' },
+      { node: { kind: 'folder', serverKey: 's', path: '/x', label: 'x' }, expect: 'folder.remote' },
+      { node: { kind: 'fsEntry', uri: vscode.Uri.file('/x/a.txt'), name: 'a.txt', isDir: false }, expect: 'fsFile' },
+      { node: { kind: 'fsEntry', uri: vscode.Uri.file('/x/d'), name: 'd', isDir: true }, expect: 'fsDir' },
+      { node: { kind: 'remoteFsEntry', serverKey: 's', path: '/x/f', name: 'f', isDir: false }, expect: 'remoteFsFile' },
+      { node: { kind: 'remoteFsEntry', serverKey: 's', path: '/x/d', name: 'd', isDir: true }, expect: 'remoteFsDir' },
+      { node: { kind: 'sessionsRoot', serverKey: '__current__', folderPath: '/x' }, expect: 'sessionsRoot' },
+      { node: { kind: 'session', serverKey: '__current__', session: { agent: 'codex', id: 's1', title: 't', cwd: '/x', timeCreated: 0, timeUpdated: 0 } }, expect: 'session' },
+      { node: { kind: 'portsRoot', serverKey: 's' }, expect: 'portsRoot' },
+      { node: { kind: 'portForward', serverKey: 's', forward: { localPort: 1, remotePort: 2 } }, expect: 'portForward.' },
+    ];
+    const realValues = new Set();
+    for (const c of cases) {
+      const item = api.provider.getTreeItem(c.node);
+      assert.ok(item.contextValue, `contextValue for ${c.node.kind}`);
+      assert.ok(
+        item.contextValue.startsWith(c.expect),
+        `getTreeItem(${c.node.kind}).contextValue=${item.contextValue} should start with ${c.expect}`,
+      );
+      realValues.add(item.contextValue);
+    }
+    // 反向（防拼写错/菜单失联）：package.json 菜单引用的每个 viewItem 都必须能由
+    // getTreeItem 产生（否则菜单永不显示，等于功能回退）。server.current 无右键菜单，
+    // 不在 declared 里也正常。
+    const expects = [
+      'server.current',
+      'server.remote',
+      'session',
+      'sessionsRoot',
+      'fsFile',
+      'fsDir',
+      'folder.workspace',
+      'folder.remote',
+      'remoteFsFile',
+      'remoteFsDir',
+      'portsRoot',
+      'portForward',
+      'info',
+    ];
+    for (const v of declared) {
+      assert.ok(
+        expects.some((e) => e.startsWith(v) || v.startsWith(e)),
+        `declared viewItem "${v}" must map to a real node type`,
+      );
+    }
+  });
 });

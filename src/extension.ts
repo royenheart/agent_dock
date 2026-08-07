@@ -15,7 +15,16 @@ import { initForwardStore, restoreActiveForwards } from './ssh/portForward';
 import { t } from './i18n';
 import { log } from './log';
 
-export function activate(context: vscode.ExtensionContext): { provider: WorkspaceProvider; decorations: SessionDecorationProvider } {
+export interface AgentDockApi {
+  provider: WorkspaceProvider;
+  decorations: SessionDecorationProvider;
+  /** 展开状态持久化实例（e2e 跨 reload 验证用；生产代码同样使用）。 */
+  expansion: ExpansionState;
+  /** workspaceState（e2e 验证跨窗口持久化用）。 */
+  workspaceState: vscode.Memento;
+}
+
+export function activate(context: vscode.ExtensionContext): AgentDockApi {
   log.init();
   setExtensionKind(context.extension.extensionKind);
   log.info('Agent Dock activated', {
@@ -153,7 +162,7 @@ export function activate(context: vscode.ExtensionContext): { provider: Workspac
     }),
   );
 
-  return { provider, decorations };
+  return { provider, decorations, expansion: expansionState, workspaceState: context.workspaceState };
 }
 
 export function deactivate(): void {

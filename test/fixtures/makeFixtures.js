@@ -15,7 +15,18 @@ const CODEX_ID = '11111111-2222-3333-4444-555555555555';
 const CLAUDE_ID = '22222222-3333-4444-5555-666666666666';
 
 function makeFixtures() {
-  fs.rmSync(ROOT, { recursive: true, force: true });
+  // 两阶段 reload 测试（AGENTWS_RELOAD_PHASE=2 需要上一窗口写入的 workspaceState）：
+  // 设 AGENTWS_KEEP_USER_DATA=1 时保留 user-data 目录，其余 fixture 照常重建。
+  const keepUserData = process.env.AGENTWS_KEEP_USER_DATA === '1';
+  if (keepUserData) {
+    fs.rmSync(HOME, { recursive: true, force: true });
+    fs.rmSync(REALWS, { recursive: true, force: true });
+    fs.rmSync(LINKWS, { recursive: true, force: true });
+    fs.rmSync(OUTSIDE, { recursive: true, force: true });
+    fs.rmSync(path.join(ROOT, 'exts'), { recursive: true, force: true });
+  } else {
+    fs.rmSync(ROOT, { recursive: true, force: true });
+  }
   fs.mkdirSync(REALWS, { recursive: true });
   fs.mkdirSync(OUTSIDE, { recursive: true });
   fs.mkdirSync(HOME, { recursive: true });

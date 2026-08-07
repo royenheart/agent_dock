@@ -7,6 +7,11 @@ const RESULTS_FILE = '/tmp/agentws-e2e/mocha-results.txt';
 
 async function main() {
   const root = path.resolve(__dirname, '..', '..');
+  // 两阶段 reload：phase 2 复用上一窗口的 user-data（保留 workspaceState）——
+  // 必须在 makeFixtures() 之前设置，否则 phase2 会把 fixture 全量清空
+  if (process.env.AGENTWS_RELOAD_PHASE === '2') {
+    process.env.AGENTWS_KEEP_USER_DATA = '1';
+  }
   const fx = makeFixtures();
   const wsPath = process.env.E2E_WS === 'real' ? fx.REALWS : fx.LINKWS;
   fs.rmSync(RESULTS_FILE, { force: true });
@@ -21,7 +26,12 @@ async function main() {
     vscodeExecutablePath,
     extensionDevelopmentPath: root,
     extensionTestsPath: path.resolve(root, 'test', 'e2e', 'suite', 'index.js'),
-    extensionTestsEnv: { HOME: fx.HOME, AGENTWS_E2E_REALWS: fx.REALWS, VSCODE_IPC_HOOK_CLI: '' },
+    extensionTestsEnv: {
+      HOME: fx.HOME,
+      AGENTWS_E2E_REALWS: fx.REALWS,
+      VSCODE_IPC_HOOK_CLI: '',
+      AGENTWS_RELOAD_PHASE: process.env.AGENTWS_RELOAD_PHASE || '',
+    },
     launchArgs: [
       wsPath,
       '--user-data-dir',
