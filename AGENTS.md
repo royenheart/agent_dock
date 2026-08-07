@@ -2,6 +2,14 @@
 
 本扩展的历史回退大多源于下面几行被改坏。改代码前先读，改完跑 `npm test`（106 项单测）。
 
+## 隐私红线（最高优先级，违反即回退）
+
+- **严禁把任何个人/私密信息写进仓库并提交**：真实服务器地址（IP/域名）、SSH 用户名、端口、私钥路径、密码、token、API key 等，一律禁止出现在源码、测试、文档、配置、commit message 里
+- 本仓库曾因 e2e 测试脚本硬编码真实服务器信息而泄露，已用 git-filter-repo 重写全部历史清除；**任何人不得再引入同类内容**
+- e2e 测试的"其他服务器"目标**必须是本地沙箱**：本地 sshd、容器（docker 起 sshd）、或 PATH 注入的 fake ssh——禁止连接任何个人真实服务器；测试连接参数一律走环境变量（见 `test/e2e-provider.js` / `test/e2e-poll.js` 头部的 `AGENTDOCK_E2E_*`）
+- 提交前自查：`grep -rniE '你的服务器地址|用户名|私钥' test/ src/ docs/` 之类的敏感词扫描；拿不准就先问
+- 若发现历史中有私密信息：用 git-filter-repo 重写历史（`--invert-paths` / `--replace-text`）+ 强制推送 + **立即轮换相关凭据**（公网可见过的私钥视同已泄露），并同步清理 GitHub 侧缓存/请求支持删除
+
 ## 打包（改 .vscodeignore / package.json 必读）
 
 - 绝不把 `node_modules/**` 加回 `.vscodeignore`——vsix 必须带 node-pty 预编译二进制，否则客户端终端失去真 pty，Ctrl+C 失效（0.1.9/0.1.10 因此回退）
