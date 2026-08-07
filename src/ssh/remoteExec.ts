@@ -1,10 +1,12 @@
 import { spawn } from 'node:child_process';
 import type { ServerConfig } from '../model';
-import { getSshConnectionPersist } from '../config';
+import { getSshConnectionPersist, getSshHostKeyMode, getSshTransport } from '../config';
 import { buildSshBaseArgs, shq } from './sshArgs';
+import { Semaphore } from './semaphore';
+import { sessionFor } from './sshSession';
 import { log, tail } from '../log';
 
-export { shq };
+export { shq, Semaphore };
 
 const slog = log.child('ssh');
 
@@ -130,69 +132,10 @@ function spawnCollect(
 /**
  * 带取消的并发信号量：acquire(signal) 返回 true 表示拿到槽位；
  * 排队期间 signal 被 abort 则从队列移除并返回 false（不占用槽位）。
+ * （实现移至 ./semaphore，此处仅保留导出兼容。）
  */
-export class Semaphore {
-  private running = 0;
-  private readonly queue: {
-    resolve: (v: boolean) => void;
-    signal?: AbortSignal;
-    onAbort?: () => void;
-    settled?: boolean;
-  }[] = [];
 
-  constructor(private readonly max: number) {}
-
-  acquire(signal?: AbortSignal): Promise<boolean> {
-    if (signal?.aborted) {
-      return Promise.resolve(false);
-    }
-    if (this.running < this.max) {
-      this.running += 1;
-      return Promise.resolve(true);
-    }
-    return new Promise<boolean>((resolve) => {
-      const entry: { resolve: (v: boolean) => void; signal?: AbortSignal; onAbort?: () => void; settled?: boolean } = {
-        resolve,
-        signal,
-      };
-      if (signal) {
-        entry.onAbort = (): void => {
-          entry.settled = true;
-          const idx = this.queue.indexOf(entry);
-          if (idx >= 0) {
-            this.queue.splice(idx, 1);
-          }
-          resolve(false);
-        };
-        signal.addEventListener('abort', entry.onAbort, { once: true });
-      }
-      this.queue.push(entry);
-      // 极端窗口：abort 在 addEventListener 与 push 之间派发时 onAbort 已 resolve，
-      // 这里把残留的 entry 移出队列，避免永久占位导致槽位泄漏
-      if (entry.settled) {
-        const idx = this.queue.indexOf(entry);
-        if (idx >= 0) {
-          this.queue.splice(idx, 1);
-        }
-      }
-    });
-  }
-
-  release(): void {
-    this.running -= 1;
-    while (this.queue.length > 0) {
-      const next = this.queue.shift()!;
-      if (next.signal && next.onAbort) {
-        next.signal.removeEventListener('abort', next.onAbort);
-      }
-      next.resolve(true);
-      this.running += 1;
-      return;
-    }
-  }
-}
-
-/** 全局 ssh 并发上限：所有远端调用（含 runSsh）共用，避免超出 sshd/连接预算。 */
+/** 全局 ssh 并发上限：spawn 降级路径与 runSsh 共用，避免超出 sshd/连接预算。 */
 export const sshSemaphore = new Semaphore(4);
 
 function scriptSummary(script: string): string {
@@ -245,6 +188,22 @@ export async function execRemote(
   timeoutMs = 60_000,
   opts?: ExecOptions,
 ): Promise<ExecResult> {
+  // 持久连接优先：同一服务器复用一条 SSH 连接（exec 通道），不每次 spawn ssh。
+  // 连接/通道失败时降级到 spawn 路径（旧行为），保证可用性。
+  if (getSshTransport() === 'persistent') {
+    try {
+      const res = await sessionFor(server, { hostKeyMode: getSshHostKeyMode() }).exec(script, timeoutMs, {
+        signal: opts?.signal,
+        maxOutputBytes: opts?.maxOutputBytes,
+      });
+      if (!opts?.quiet) {
+        slog.debug(`#persistent ✓ ${sshDestination(server)} ← ${scriptSummary(script)}`);
+      }
+      return res;
+    } catch (err) {
+      slog.warn(`#persistent ✗ ${sshDestination(server)} fallback to spawn: ${String((err as Error)?.message ?? err)}`);
+    }
+  }
   const args = sshBaseArgs();
   if (server.port) {
     args.push('-p', String(server.port));
@@ -281,6 +240,21 @@ export async function execRemoteBuffer(
   timeoutMs = 60_000,
   opts?: ExecOptions,
 ): Promise<ExecBufferResult> {
+  // 持久连接优先（exec 通道，stdout 保持二进制 Buffer）；失败降级 spawn。
+  if (getSshTransport() === 'persistent') {
+    try {
+      const res = await sessionFor(server, { hostKeyMode: getSshHostKeyMode() }).execBuffer(script, timeoutMs, {
+        signal: opts?.signal,
+        maxOutputBytes: opts?.maxOutputBytes,
+      });
+      if (!opts?.quiet) {
+        slog.debug(`#persistent ✓ ${sshDestination(server)} ← ${scriptSummary(script)} (binary)`);
+      }
+      return res;
+    } catch (err) {
+      slog.warn(`#persistent ✗ ${sshDestination(server)} fallback to spawn: ${String((err as Error)?.message ?? err)}`);
+    }
+  }
   const args = sshBaseArgs();
   if (server.port) {
     args.push('-p', String(server.port));

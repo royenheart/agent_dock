@@ -3,6 +3,7 @@ import { WorkspaceProvider, type Node } from './tree/workspaceProvider';
 import { ExpansionState } from './tree/expansionState';
 import { SessionDecorationProvider } from './tree/sessionDecorations';
 import { remoteFsProvider, REMOTE_SCHEME } from './ssh/remoteFsProvider';
+import { disposeSshSessions } from './ssh/sshSession';
 import { SettingsViewProvider } from './views/settingsView';
 import { SessionPanel } from './views/sessionPanel';
 import { registerCommands } from './commands';
@@ -159,4 +160,6 @@ export function deactivate(): void {
   // reload 的销毁序列会向扩展派发终端 close 事件；标记后两套终端持久化都不再删记录/落盘
   markClientTerminalsShuttingDown();
   markNativeTerminalsShuttingDown();
+  // 关闭所有持久 SSH 会话（SFTP/exec 通道所在的长连接）
+  void disposeSshSessions();
 }

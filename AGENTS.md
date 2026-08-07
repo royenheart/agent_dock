@@ -14,8 +14,17 @@
 
 - 绝不把 `node_modules/**` 加回 `.vscodeignore`——vsix 必须带 node-pty 预编译二进制，否则客户端终端失去真 pty，Ctrl+C 失效（0.1.9/0.1.10 因此回退）
 - 打 vsix 后用 `unzip -l *.vsix | grep node-pty` 确认二进制在包内
-- **dependencies 只允许 node-pty**：dompurify/marked 的 npm 包源码不用（webview 走 media/vendor 的 UMD），必须放 devDependencies，否则 vsce 把它们打进 vsix 白白膨胀 20+MB
+- **dependencies 只允许 node-pty 和 ssh2**（均为运行时必需：node-pty 提供真 pty；ssh2 提供持久 SSH 连接 + SFTP，纯 JS 体积小）：dompurify/marked 的 npm 包源码不用（webview 走 media/vendor 的 UMD），必须放 devDependencies，否则 vsce 把它们打进 vsix 白白膨胀 20+MB
 - `@types/*` 永远只在 devDependencies，vsce 不会打包
+
+## SSH 传输层（src/ssh/sshSession.ts + remoteExec.ts）
+
+- **默认且必须保持 persistent 传输**：每台服务器一条长连接（ssh2），文件操作走 SFTP 子系统、脚本走 exec 通道——禁止退回"每次操作 spawn 一个 ssh 进程"（Windows 无 ControlMaster 时尤其慢）
+- 认证只走 ssh-agent（SSH_AUTH_SOCK）或 ~/.ssh/config 的 IdentityFile/默认私钥，BatchMode 语义不弹密码
+- 主机密钥默认按 ~/.ssh/known_hosts 严格校验（`agentDock.sshHostKeyMode`），实现见 `knownHosts.ts`（支持哈希条目 `|1|salt|hash`）
+- execRemote/execRemoteBuffer 持久路径失败会自动降级 spawn（可用性兜底），但这是异常路径不是常态
+- 连接失败有指数退避（1s→30s），防止轮询对不可达服务器反复发起 10s 超时连接
+- 会话池（sessionFor）在 extension.ts deactivate 时 `disposeSshSessions()` 释放
 
 ## 客户端终端（src/ssh/clientTerminal.ts）
 

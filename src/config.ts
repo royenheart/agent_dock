@@ -179,6 +179,18 @@ export function getSshConnectionPersist(): string {
   return /^(\d+[smh]?|yes|0)$/.test(raw) ? raw : '8h';
 }
 
+/** 其他服务器的传输方式：persistent = 每服务器一条长连接（SFTP + exec 通道）；spawn = 每次操作一个 ssh 进程。 */
+export function getSshTransport(): 'persistent' | 'spawn' {
+  const raw = vscode.workspace.getConfiguration(SECTION).get<string>('sshTransport', 'persistent');
+  return raw === 'spawn' ? 'spawn' : 'persistent';
+}
+
+/** 持久连接的主机密钥校验：yes（known_hosts 必须已有）/ accept-new（未知自动加入）/ no（跳过）。 */
+export function getSshHostKeyMode(): 'yes' | 'accept-new' | 'no' {
+  const raw = vscode.workspace.getConfiguration(SECTION).get<string>('sshHostKeyMode', 'yes');
+  return raw === 'accept-new' || raw === 'no' ? raw : 'yes';
+}
+
 export function getConnectInNewWindow(): boolean {
   return vscode.workspace
     .getConfiguration(SECTION)

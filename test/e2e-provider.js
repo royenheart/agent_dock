@@ -9,6 +9,8 @@
  *   AGENTDOCK_E2E_PORT  (default 2222)
  *   AGENTDOCK_E2E_USER  (default e2e)
  *   AGENTDOCK_E2E_KEY   private key path (optional; default ssh-agent / default keys)
+ *   AGENTDOCK_E2E_HOME  sandbox HOME with .ssh/id_ed25519 + .ssh/known_hosts
+ *                       (persistent-SSH path; see test/e2e/sshd-local.sh)
  *
  * Container example (any sshd image works):
  *   docker run -d --rm --name agentdock-e2e-sshd -p 2222:22 \
@@ -29,6 +31,12 @@ const E2E_HOST = process.env.AGENTDOCK_E2E_HOST || '127.0.0.1';
 const E2E_PORT = Number(process.env.AGENTDOCK_E2E_PORT || 2222);
 const E2E_USER = process.env.AGENTDOCK_E2E_USER || 'e2e';
 const E2E_KEY = process.env.AGENTDOCK_E2E_KEY || '';
+// 沙箱 HOME：内含 .ssh/id_ed25519 与 .ssh/known_hosts，让持久连接路径（ssh2）
+// 能解析到私钥并通过主机密钥校验（见 test/e2e/sshd-local.sh）
+const E2E_HOME = process.env.AGENTDOCK_E2E_HOME || '';
+if (E2E_HOME) {
+  process.env.HOME = E2E_HOME;
+}
 
 // --- vscode stub (module resolver rewrites 'vscode' to this) ---
 const stubDir = fs.mkdtempSync(path.join(os.tmpdir(), 'agentdock-stub-'));
@@ -57,7 +65,7 @@ module.exports = {
   FileType: { File: 1, Directory: 2, SymbolicLink: 64 },
   FileChangeType: { Created: 1, Changed: 2, Deleted: 3 },
   FilePermission: { Readonly: 1 },
-  FileSystemError: class extends Error { static FileNotFound = (u) => new Error('nf ' + u); static Unavailable = (m) => new Error(m); static NoPermissions = () => new Error('noperm'); },
+  FileSystemError: class extends Error { static FileNotFound = (u) => new Error('nf ' + u); static Unavailable = (m) => new Error(m); static NoPermissions = () => new Error('noperm'); static FileExists = (u) => new Error('exists ' + u); },
   commands: { executeCommand: async () => {} },
   l10n: { t: (s) => s },
   ConfigurationTarget: { Global: 1 },
@@ -165,6 +173,34 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
     console.log('readFile oversized rejected:', String(err));
   }
   if (!rejected) throw new Error('oversized readFile must be rejected via TOOBIG marker');
+
+  // write path (SFTP): writeFile / createDirectory / rename / delete
+  const W = '/tmp/agentdock-provider/w.txt';
+  await provider.writeFile(remoteUri(server.name, W), Buffer.from('v1'), { create: true, overwrite: false });
+  const w1 = await provider.readFile(remoteUri(server.name, W));
+  if (Buffer.from(w1).toString('utf8') !== 'v1') throw new Error('writeFile content mismatch');
+  // overwrite without flag → FileExists
+  let existsErr = false;
+  try {
+    await provider.writeFile(remoteUri(server.name, W), Buffer.from('x'), { create: true, overwrite: false });
+  } catch (err) {
+    existsErr = String(err).includes('exists');
+  }
+  if (!existsErr) throw new Error('writeFile must reject overwrite without overwrite flag');
+  await provider.writeFile(remoteUri(server.name, W), Buffer.from('v2'), { create: true, overwrite: true });
+  const w2 = await provider.readFile(remoteUri(server.name, W));
+  if (Buffer.from(w2).toString('utf8') !== 'v2') throw new Error('overwrite content mismatch');
+  // createDirectory + delete dir
+  await provider.createDirectory(remoteUri(server.name, '/tmp/agentdock-provider/sub'));
+  const list = await provider.readDirectory(remoteUri(server.name, '/tmp/agentdock-provider'));
+  if (!list.some(([n]) => n === 'sub')) throw new Error('createDirectory/readDirectory mismatch');
+  await provider.delete(remoteUri(server.name, '/tmp/agentdock-provider/sub'), { recursive: false });
+  // rename
+  await provider.rename(remoteUri(server.name, W), remoteUri(server.name, '/tmp/agentdock-provider/w2.txt'), { overwrite: false });
+  const renamed = await provider.stat(remoteUri(server.name, '/tmp/agentdock-provider/w2.txt'));
+  if (renamed.size !== 2) throw new Error('rename target size mismatch');
+  await provider.delete(remoteUri(server.name, '/tmp/agentdock-provider/w2.txt'), { recursive: false });
+  console.log('provider write/rename/delete OK (SFTP path)');
 
   watch.dispose();
   watch2.dispose();

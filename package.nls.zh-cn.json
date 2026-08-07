@@ -49,5 +49,7 @@
   "cmd.remoteFsPaste": "粘贴",
   "cmd.remoteFsOpenTerminal": "在此处打开终端",
   "config.remoteAutoRefresh.description": "自动轮询其他服务器上文件/目录的变化（已打开的编辑器与目录树实时更新）。",
-  "config.remoteWatchIntervalSeconds.description": "轮询其他服务器文件/目录变化的间隔（秒）。"
+  "config.remoteWatchIntervalSeconds.description": "轮询其他服务器文件/目录变化的间隔（秒）。",
+  "config.sshTransport.description": "操作其他服务器的传输方式：\"persistent\" 每台服务器保持一条 SSH 长连接（文件操作走 SFTP、脚本走 exec 通道，低延迟，不再每次操作启动一个 ssh 进程）；\"spawn\" 每次操作一个 ssh 进程（旧行为）。",
+  "config.sshHostKeyMode.description": "持久 SSH 连接的主机密钥校验：\"yes\" 要求主机已记录在 ~/.ssh/known_hosts；\"accept-new\" 自动信任并记录未知主机；\"no\" 跳过校验（不推荐）。"
 }

@@ -48,7 +48,7 @@ function exec(script, timeoutMs = 15_000) {
     const args = [
       '-F', '/dev/null',
       ...keyArgs,
-      '-o', 'BatchMode=yes', '-o', 'ConnectTimeout=8', '-T',
+      '-o', 'BatchMode=yes', '-o', 'ConnectTimeout=8', '-o', 'StrictHostKeyChecking=accept-new', '-T',
       '-p', String(E2E_PORT),
       `${E2E_USER}@${E2E_HOST}`, 'bash', '-s',
     ];

@@ -10,6 +10,10 @@ async function main() {
   const fx = makeFixtures();
   const wsPath = process.env.E2E_WS === 'real' ? fx.REALWS : fx.LINKWS;
   fs.rmSync(RESULTS_FILE, { force: true });
+  // 沙箱/容器里 /run/user/<uid> 可能只读，VSCode 的 IPC socket 建不出来；
+  // 一律把 XDG_RUNTIME_DIR 指到 fixture 可写目录，保证 e2e 可跑
+  process.env.XDG_RUNTIME_DIR = path.join(fx.ROOT, 'xdg-runtime');
+  fs.mkdirSync(process.env.XDG_RUNTIME_DIR, { recursive: true });
   const localWrapper = path.resolve(root, 'test', 'e2e', 'code-under-test.sh');
   const vscodeExecutablePath =
     process.env.VSCODE_PATH || (fs.existsSync('/usr/share/code/code') ? localWrapper : undefined);

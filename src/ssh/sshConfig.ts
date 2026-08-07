@@ -7,6 +7,8 @@ export interface SshHostEntry {
   hostName?: string;
   user?: string;
   port?: number;
+  /** IdentityFile 指令（保持出现顺序，已展开 ~）。 */
+  identityFiles?: string[];
 }
 
 const MAX_INCLUDE_DEPTH = 3;
@@ -107,6 +109,15 @@ export async function readSshConfigHosts(homeDir?: string): Promise<SshHostEntry
           if (Number.isInteger(n) && n > 0) {
             entry.port = n;
           }
+        } else if (keyword === 'identityfile') {
+          // 多条 IdentityFile 按序尝试（与 OpenSSH 一致）；~ 展开为 home
+          const expanded = value.replace(/^~(?=\/|$)/, home);
+          if (!entry.identityFiles) {
+            entry.identityFiles = [];
+          }
+          if (!entry.identityFiles.includes(expanded)) {
+            entry.identityFiles.push(expanded);
+          }
         }
       }
     }
@@ -114,4 +125,39 @@ export async function readSshConfigHosts(homeDir?: string): Promise<SshHostEntry
 
   await parseFile(path.join(home, '.ssh', 'config'), 0);
   return out;
+}
+
+export interface ResolvedSshHost {
+  /** 连接的别名（用户在 servers 配置里填的 host）。 */
+  alias: string;
+  /** 解析后的实际主机名（HostName 或别名本身）。 */
+  hostName: string;
+  user?: string;
+  port?: number;
+  /** 按序排列的 IdentityFile（含默认私钥兜底）。 */
+  identityFiles: string[];
+}
+
+/**
+ * 解析某个别名（servers 配置里的 host）的完整连接选项：
+ * ~/.ssh/config 的 HostName/User/Port/IdentityFile（含 Include），
+ * 别名无配置时回落默认值。identityFiles 追加 ~/.ssh/id_* 默认私钥兜底。
+ */
+export async function resolveSshHostOptions(alias: string, homeDir?: string): Promise<ResolvedSshHost> {
+  const home = homeDir ?? os.homedir();
+  const entries = await readSshConfigHosts(home);
+  // ssh 主机名大小写不敏感（DNS 层面），按小写匹配
+  const match = entries.find((e) => e.host.toLowerCase() === alias.toLowerCase());
+  const identityFiles = [...(match?.identityFiles ?? [])];
+  const defaults = ['id_ed25519', 'id_rsa', 'id_ecdsa', 'id_dsa']
+    .map((f) => path.join(home, '.ssh', f))
+    .filter((f) => !identityFiles.includes(f));
+  identityFiles.push(...defaults);
+  return {
+    alias,
+    hostName: match?.hostName || alias,
+    user: match?.user,
+    port: match?.port,
+    identityFiles,
+  };
 }

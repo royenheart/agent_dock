@@ -3,7 +3,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
-const { readSshConfigHosts } = require('../../out/ssh/sshConfig');
+const { readSshConfigHosts, resolveSshHostOptions } = require('../../out/ssh/sshConfig');
 const { gatherSettings } = require('../../out/views/settingsData');
 
 function tmpHome() {
@@ -53,6 +53,71 @@ test('sshConfig: parses hosts, skips wildcards, first-wins, includes', () => {
 test('sshConfig: missing config yields empty list', async () => {
   const hosts = await readSshConfigHosts(tmpHome());
   assert.deepEqual(hosts, []);
+});
+
+test('sshConfig: identityFiles collected in order with ~ expansion', () => {
+  const home = tmpHome();
+  fs.mkdirSync(path.join(home, '.ssh'), { recursive: true });
+  fs.writeFileSync(
+    path.join(home, '.ssh', 'config'),
+    [
+      'Host prod',
+      '  IdentityFile ~/.ssh/prod_key',
+      '  IdentityFile ~/.ssh/backup_key',
+      '  User deploy',
+      '  Port 2200',
+      '',
+    ].join('\n'),
+  );
+  return readSshConfigHosts(home).then((hosts) => {
+    const prod = hosts.find((h) => h.host === 'prod');
+    assert.deepEqual(prod.identityFiles, [`${home}/.ssh/prod_key`, `${home}/.ssh/backup_key`]);
+    assert.equal(prod.user, 'deploy');
+    assert.equal(prod.port, 2200);
+  });
+});
+
+test('resolveSshHostOptions: alias with config options + default keys appended', async () => {
+  const home = tmpHome();
+  fs.mkdirSync(path.join(home, '.ssh'), { recursive: true });
+  fs.writeFileSync(
+    path.join(home, '.ssh', 'config'),
+    ['Host jump', '  HostName jump.internal', '  User alice', '  Port 2222', '  IdentityFile ~/.ssh/jump_key'].join('\n'),
+  );
+  const r = await resolveSshHostOptions('jump', home);
+  assert.equal(r.alias, 'jump');
+  assert.equal(r.hostName, 'jump.internal');
+  assert.equal(r.user, 'alice');
+  assert.equal(r.port, 2222);
+  assert.deepEqual(r.identityFiles, [
+    `${home}/.ssh/jump_key`,
+    `${home}/.ssh/id_ed25519`,
+    `${home}/.ssh/id_rsa`,
+    `${home}/.ssh/id_ecdsa`,
+    `${home}/.ssh/id_dsa`,
+  ]);
+});
+
+test('resolveSshHostOptions: unknown alias falls back to alias hostname and default keys', async () => {
+  const home = tmpHome();
+  const r = await resolveSshHostOptions('ghost', home);
+  assert.equal(r.hostName, 'ghost');
+  assert.equal(r.user, undefined);
+  assert.equal(r.port, undefined);
+  assert.deepEqual(r.identityFiles, [
+    `${home}/.ssh/id_ed25519`,
+    `${home}/.ssh/id_rsa`,
+    `${home}/.ssh/id_ecdsa`,
+    `${home}/.ssh/id_dsa`,
+  ]);
+});
+
+test('resolveSshHostOptions: host matching is case-insensitive', async () => {
+  const home = tmpHome();
+  fs.mkdirSync(path.join(home, '.ssh'), { recursive: true });
+  fs.writeFileSync(path.join(home, '.ssh', 'config'), 'Host MyBox\n  User bob\n');
+  const r = await resolveSshHostOptions('mybox', home);
+  assert.equal(r.user, 'bob');
 });
 
 test('settingsData: per-agent buckets, skills attributed to all owning agents', async () => {

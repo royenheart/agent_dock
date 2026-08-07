@@ -1,14 +1,14 @@
 import * as vscode from 'vscode';
+import type { SFTPWrapper, Stats, FileEntryWithStats } from 'ssh2';
 import type { ServerConfig } from '../model';
-import { getRemoteAutoRefresh, getRemoteWatchIntervalMs, getServers } from '../config';
-import { execRemote, execRemoteBuffer, shq } from './remoteExec';
-import { joinRemotePath, parseLsAp, parseStatFs, type LsEntry } from './remoteFsParse';
+import { getRemoteAutoRefresh, getRemoteWatchIntervalMs, getServers, getSshHostKeyMode } from '../config';
+import { execRemote, shq } from './remoteExec';
+import { joinRemotePath, type LsEntry } from './remoteFsParse';
+import { sessionFor } from './sshSession';
 import {
-  buildLimitedReadScript,
   buildPollScript,
   diffDirSnapshot,
   diffFileSnapshot,
-  isTooBigResult,
   parsePollOutput,
   REMOTE_PREVIEW_CAP,
   type FileFingerprint,
@@ -24,6 +24,127 @@ export function remoteUri(serverKey: string, path: string): vscode.Uri {
 
 function serverFor(authority: string): ServerConfig | undefined {
   return getServers().find((s) => s.name === authority);
+}
+
+/* ---------- SFTP 小工具（promisify + 错误映射） ---------- */
+
+const SFX_NO_SUCH_FILE = 2;
+const SFX_PERMISSION_DENIED = 3;
+const SFX_FAILURE = 4;
+const SFX_FILE_ALREADY_EXISTS = 11;
+
+function isSfx(err: unknown, code: number): boolean {
+  return (err as { code?: number })?.code === code;
+}
+
+function sftpStat(sftp: SFTPWrapper, p: string): Promise<Stats> {
+  return new Promise((resolve, reject) => sftp.stat(p, (err, st) => (err ? reject(err) : resolve(st))));
+}
+
+function sftpList(sftp: SFTPWrapper, p: string): Promise<FileEntryWithStats[]> {
+  return new Promise((resolve, reject) => {
+    sftp.opendir(p, (err, handle) => {
+      if (err) {
+        reject(err);
+        return;
+      }
+      sftp.readdir(handle, (err2, list) => {
+        sftp.close(handle, () => {});
+        if (err2) {
+          reject(err2);
+          return;
+        }
+        resolve(list);
+      });
+    });
+  });
+}
+
+function sftpWrite(sftp: SFTPWrapper, p: string, data: Buffer): Promise<void> {
+  return new Promise((resolve, reject) => sftp.writeFile(p, data, (err) => (err ? reject(err) : resolve())));
+}
+
+function sftpUnlink(sftp: SFTPWrapper, p: string): Promise<void> {
+  return new Promise((resolve, reject) => sftp.unlink(p, (err) => (err ? reject(err) : resolve())));
+}
+
+function sftpRmdir(sftp: SFTPWrapper, p: string): Promise<void> {
+  return new Promise((resolve, reject) => sftp.rmdir(p, (err) => (err ? reject(err) : resolve())));
+}
+
+function sftpMkdir(sftp: SFTPWrapper, p: string): Promise<void> {
+  return new Promise((resolve, reject) => sftp.mkdir(p, (err) => (err ? reject(err) : resolve())));
+}
+
+function sftpRename(sftp: SFTPWrapper, from: string, to: string): Promise<void> {
+  return new Promise((resolve, reject) => sftp.rename(from, to, (err) => (err ? reject(err) : resolve())));
+}
+
+/**
+ * 覆盖式 rename：OpenSSH sftp-server 对 flags=0 的 rename 在目标已存在时返回
+ * EEXIST，需要先删目标再 rename（非原子，但对预览编辑场景足够）。
+ */
+async function sftpRenameOverwrite(sftp: SFTPWrapper, from: string, to: string): Promise<void> {
+  try {
+    await sftpRename(sftp, from, to);
+    return;
+  } catch (err) {
+    if (!isSfx(err, SFX_FILE_ALREADY_EXISTS) && !isSfx(err, SFX_FAILURE)) {
+      throw err;
+    }
+  }
+  await sftpUnlink(sftp, to);
+  await sftpRename(sftp, from, to);
+}
+
+/** 带上限的读取：超过 cap 字节即中断，避免大文件整块进内存（与旧 TOOBIG 语义一致）。 */
+function sftpReadBounded(sftp: SFTPWrapper, p: string, maxBytes: number): Promise<Buffer> {
+  return new Promise((resolve, reject) => {
+    const chunks: Buffer[] = [];
+    let total = 0;
+    const stream = sftp.createReadStream(p, { start: 0 });
+    const fail = (err: unknown): void => {
+      try {
+        stream.destroy();
+      } catch {
+        // ignore
+      }
+      reject(err);
+    };
+    stream.on('data', (d: Buffer) => {
+      total += d.length;
+      if (total > maxBytes) {
+        fail(vscode.FileSystemError.Unavailable('read exceeded preview cap'));
+        return;
+      }
+      chunks.push(d);
+    });
+    stream.on('end', () => resolve(Buffer.concat(chunks)));
+    stream.on('error', fail);
+  });
+}
+
+/** SFTP 状态码 → vscode.FileSystemError。 */
+function mapSftpError(err: unknown, uri: vscode.Uri): vscode.FileSystemError {
+  if (isSfx(err, SFX_NO_SUCH_FILE)) {
+    return vscode.FileSystemError.FileNotFound(uri);
+  }
+  if (isSfx(err, SFX_PERMISSION_DENIED)) {
+    return vscode.FileSystemError.NoPermissions(uri);
+  }
+  if (isSfx(err, SFX_FILE_ALREADY_EXISTS)) {
+    return vscode.FileSystemError.FileExists(uri);
+  }
+  const msg = (err as Error)?.message ?? String(err);
+  return vscode.FileSystemError.Unavailable(msg.slice(0, 200));
+}
+
+/** 文件类型位判断。 */
+function isSftpDir(st: Stats | FileEntryWithStats['attrs']): boolean {
+  return (st.mode & 0o170000) === 0o040000;
+}
+function isSftpLink(st: Stats): boolean {
+  return (st.mode & 0o170000) === 0o120000;
 }
 
 /**
@@ -223,68 +344,155 @@ export class RemoteFsProvider implements vscode.FileSystemProvider {
   }
 
   async stat(uri: vscode.Uri): Promise<vscode.FileStat> {
-    const server = this.mustServer(uri);
-    const res = await execRemote(server, `stat -c '%F|%s|%Y' ${shq(uri.path)}`, 15_000);
-    const info = res.code === 0 ? parseStatFs(res.stdout) : undefined;
-    if (!info) {
-      throw vscode.FileSystemError.FileNotFound(uri);
+    const sftp = await this.sftpFor(uri);
+    let st: Stats;
+    try {
+      st = await sftpStat(sftp, uri.path);
+    } catch (err) {
+      throw mapSftpError(err, uri);
     }
     return {
-      type:
-        info.kind === 'directory'
-          ? vscode.FileType.Directory
-          : info.kind === 'link'
-            ? vscode.FileType.SymbolicLink
-            : vscode.FileType.File,
-      ctime: info.mtimeMs,
-      mtime: info.mtimeMs,
-      size: info.size,
+      type: isSftpDir(st) ? vscode.FileType.Directory : isSftpLink(st) ? vscode.FileType.SymbolicLink : vscode.FileType.File,
+      ctime: st.mtime * 1000,
+      mtime: st.mtime * 1000,
+      size: st.size,
+      // 保持「只读预览」产品行为不变；放开写权限是独立的产品决策
       permissions: vscode.FilePermission.Readonly,
     };
   }
 
   async readDirectory(uri: vscode.Uri): Promise<[string, vscode.FileType][]> {
-    const server = this.mustServer(uri);
-    const res = await execRemote(server, `ls -1Ap --color=never ${shq(uri.path)}`, 15_000);
-    if (res.code !== 0) {
-      throw vscode.FileSystemError.FileNotFound(uri);
+    const sftp = await this.sftpFor(uri);
+    let list: FileEntryWithStats[];
+    try {
+      list = await sftpList(sftp, uri.path);
+    } catch (err) {
+      throw mapSftpError(err, uri);
     }
-    return parseLsAp(res.stdout).map((e) => [
-      e.name,
-      e.isDir ? vscode.FileType.Directory : vscode.FileType.File,
-    ]);
+    return list.map((e) => [e.filename, isSftpDir(e.attrs) ? vscode.FileType.Directory : vscode.FileType.File]);
   }
 
   async readFile(uri: vscode.Uri): Promise<Uint8Array> {
-    const server = this.mustServer(uri);
-    // 单次 ssh 完成 stat+cat，避免两次调用间文件增长绕过上限（TOCTOU）；
-    // 超限时远端 stderr 输出标记，不把大文件整块拉进内存
-    const res = await execRemoteBuffer(server, buildLimitedReadScript(uri.path, REMOTE_PREVIEW_CAP), 30_000);
-    if (isTooBigResult(res, REMOTE_PREVIEW_CAP)) {
+    const sftp = await this.sftpFor(uri);
+    // 先 stat 拦截超限文件（不读），读取时再带上限兜底，防止读取途中文件暴涨
+    let st: Stats;
+    try {
+      st = await sftpStat(sftp, uri.path);
+    } catch (err) {
+      throw mapSftpError(err, uri);
+    }
+    if (st.size > REMOTE_PREVIEW_CAP) {
       throw vscode.FileSystemError.Unavailable(
         `${uri.path} exceeds the ${REMOTE_PREVIEW_CAP / 1_048_576} MiB preview cap`,
       );
     }
-    if (res.code !== 0) {
-      throw vscode.FileSystemError.Unavailable(res.stderr.slice(0, 200) || `failed to read ${uri.path}`);
+    try {
+      const buf = await sftpReadBounded(sftp, uri.path, REMOTE_PREVIEW_CAP);
+      return new Uint8Array(buf);
+    } catch (err) {
+      if (err instanceof vscode.FileSystemError) {
+        throw err;
+      }
+      throw mapSftpError(err, uri);
     }
-    return new Uint8Array(res.stdout);
   }
 
-  createDirectory(): never {
-    throw vscode.FileSystemError.NoPermissions();
+  async createDirectory(uri: vscode.Uri): Promise<void> {
+    const sftp = await this.sftpFor(uri);
+    try {
+      await sftpMkdir(sftp, uri.path);
+    } catch (err) {
+      throw mapSftpError(err, uri);
+    }
   }
 
-  writeFile(): never {
-    throw vscode.FileSystemError.NoPermissions();
+  async writeFile(uri: vscode.Uri, content: Uint8Array, options: { create: boolean; overwrite: boolean }): Promise<void> {
+    const sftp = await this.sftpFor(uri);
+    const p = uri.path;
+    let exists = true;
+    try {
+      await sftpStat(sftp, p);
+    } catch (err) {
+      if (isSfx(err, SFX_NO_SUCH_FILE)) {
+        exists = false;
+      } else {
+        throw mapSftpError(err, uri);
+      }
+    }
+    if (exists && !options.overwrite) {
+      throw vscode.FileSystemError.FileExists(uri);
+    }
+    if (!exists && !options.create) {
+      throw vscode.FileSystemError.FileNotFound(uri);
+    }
+    // 原子写：临时文件 + rename 覆盖，避免轮询 watch 读到半截内容
+    const tmp = `${p}.agentdock-tmp-${process.pid}-${Date.now().toString(36)}`;
+    try {
+      await sftpWrite(sftp, tmp, Buffer.from(content));
+      await sftpRenameOverwrite(sftp, tmp, p);
+    } catch (err) {
+      try {
+        await sftpUnlink(sftp, tmp);
+      } catch {
+        // 清理失败可忽略
+      }
+      throw mapSftpError(err, uri);
+    }
   }
 
-  delete(): never {
-    throw vscode.FileSystemError.NoPermissions();
+  async delete(uri: vscode.Uri, options: { recursive: boolean }): Promise<void> {
+    const server = this.mustServer(uri);
+    const sftp = await this.sftpFor(uri);
+    let st: Stats;
+    try {
+      st = await sftpStat(sftp, uri.path);
+    } catch (err) {
+      throw mapSftpError(err, uri);
+    }
+    if (st.isDirectory() && options.recursive) {
+      // sftp 无递归删除原语；rm -rf 走持久连接的 exec 通道（单次往返），不是新 ssh 进程
+      const res = await execRemote(server, `rm -rf -- ${shq(uri.path)}`, 30_000);
+      if (res.code !== 0) {
+        throw vscode.FileSystemError.Unavailable(res.stderr.slice(0, 200) || `rm failed (${res.code})`);
+      }
+      return;
+    }
+    try {
+      if (st.isDirectory()) {
+        await sftpRmdir(sftp, uri.path);
+      } else {
+        await sftpUnlink(sftp, uri.path);
+      }
+    } catch (err) {
+      throw mapSftpError(err, uri);
+    }
   }
 
-  rename(): never {
-    throw vscode.FileSystemError.NoPermissions();
+  async rename(oldUri: vscode.Uri, newUri: vscode.Uri, options: { overwrite: boolean }): Promise<void> {
+    const sftp = await this.sftpFor(oldUri);
+    let targetExists = false;
+    try {
+      await sftpStat(sftp, newUri.path);
+      targetExists = true;
+    } catch (err) {
+      if (!isSfx(err, SFX_NO_SUCH_FILE)) {
+        throw mapSftpError(err, newUri);
+      }
+    }
+    if (targetExists && !options.overwrite) {
+      throw vscode.FileSystemError.FileExists(newUri);
+    }
+    try {
+      await sftpRenameOverwrite(sftp, oldUri.path, newUri.path);
+    } catch (err) {
+      throw mapSftpError(err, oldUri);
+    }
+  }
+
+  /** 取该 uri 对应服务器的持久会话 SFTP 句柄。 */
+  private async sftpFor(uri: vscode.Uri): Promise<SFTPWrapper> {
+    const server = this.mustServer(uri);
+    return sessionFor(server, { hostKeyMode: getSshHostKeyMode() }).sftp();
   }
 
   private mustServer(uri: vscode.Uri): ServerConfig {
