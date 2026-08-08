@@ -1,9 +1,21 @@
 .vscode/**
 src/**
 test/**
+scripts/**
 .gitignore
 tsconfig.json
 *.map
 docs/**
 .omo/**
 .codegraph
+# 运行时只用 dist/extension.js（esbuild bundle）；out/ 仅供 e2e 测试 require，不进 vsix
+out/**
+# ssh2 已打进 dist bundle，不再需要 node_modules/ssh2
+node_modules/ssh2/**
+# node-pty 裁剪：只保留运行所需的 lib/ + prebuilds（.node + OpenConsole.exe）
+node_modules/node-pty/third_party/**
+node_modules/node-pty/src/**
+node_modules/node-pty/scripts/**
+node_modules/node-pty/typings/**
+node_modules/node-pty/node_modules/**
+node_modules/node-pty/**/*.pdb

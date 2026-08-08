@@ -12,17 +12,24 @@
 
 ```bash
 npm install
-npm run compile      # tsc -p ./，输出到 out/
+npm run compile      # 仅 tsc → out/（e2e 测试 require 用）
+npm run build        # 完整构建：tsc（out/）+ esbuild bundle（dist/extension.js，运行时加载）
 ```
 
 调试：VS Code 打开本仓库，`F5`（`.vscode/launch.json` 已配 Extension Development Host）。
 
-## 打包 vsix（注意 node-pty！）
+## 打包 vsix（统一入口，本地与 GitHub CI/CD 一致）
 
 ```bash
-npm run compile
-npx vsce package --out agent-dock-<版本>.vsix
+npm run package [-- --out <路径>]   # tsc → esbuild → vsce → 产物验证（node-pty/无 .pdb/ssh2 bundle/大小）
 ```
+
+- 打包逻辑只存在 `scripts/build.mjs`（esbuild bundle）+ `scripts/package.mjs`（打包+验证）；
+  本地与 `.github/workflows/*.yml` 都调用 `npm run build` / `npm run package`——**改打包方式只改 scripts/ + package.json + .vscodeignore，不要另写打包命令**
+- 运行时加载 `dist/extension.js`（esbuild 单文件 bundle，含 ssh2；package.json main 指向它）；
+  `out/` 仅供 e2e 测试 require，不进 vsix
+- vsix 约 **2MB**（esbuild 压缩 JS + ssh2 打进 bundle；node-pty 只保留运行所需的
+  lib/ + prebuilds，排除 ~20MB 的 .pdb 调试符号与 third_party 源码）
 
 **打包红线**（历史踩坑，见 [AGENTS.md](../AGENTS.md)）：
 
@@ -30,8 +37,8 @@ npx vsce package --out agent-dock-<版本>.vsix
 - 打包后必须验证 node-pty 在包内：
 
 ```bash
-unzip -l agent-dock-*.vsix | grep -c "node-pty"     # 期望 68 左右
 unzip -l agent-dock-*.vsix | grep "prebuilds/.*\.node"   # 期望 8 个平台二进制
+unzip -l agent-dock-*.vsix | grep -c "\.pdb"             # 期望 0（调试符号不得发布）
 ```
 
 发布流程：改 `package.json` 版本 → 更新 `CHANGELOG.md` → 编译 → 打包 → 校验 node-pty。

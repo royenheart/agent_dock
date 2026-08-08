@@ -15,14 +15,13 @@ jobs:
           node-version: 24
           cache: npm
       - run: npm ci
-      - run: npm run compile
+      # 统一入口：build.mjs（tsc + esbuild bundle → dist/extension.js）——
+      # e2e 用 @vscode/test-electron 加载的正是 main=dist/extension.js 的 bundle
+      - run: npm run build
       - run: npm run test:unit
       - name: E2E (real VS Code, xvfb)
         run: xvfb-run -a node test/e2e/runTest.js
-      # 打包产物防回归：vsix 必须带 node-pty（含预编译二进制）与 ssh2，
-      # 否则客户端终端失去 pty / 持久 SSH+SFTP 不可用（曾因 --no-dependencies 漏打）
-      - name: Package and verify runtime deps
-        run: |
-          npx @vscode/vsce package --out /tmp/ci-check.vsix
-          test "$(unzip -l /tmp/ci-check.vsix | grep -c 'node-pty/prebuilds/.*\.node')" -ge 8
-          test "$(unzip -l /tmp/ci-check.vsix | grep -c 'ssh2/')" -gt 0
+      # 打包产物防回归（统一入口 scripts/package.mjs 内置验证：node-pty prebuilds、
+      # 无 .pdb、ssh2 已 bundle 进 dist、vsix 大小）
+      - name: Package + verify (unified entry)
+        run: npm run package -- --out /tmp/ci-check.vsix

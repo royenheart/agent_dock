@@ -9,13 +9,15 @@
 - 提交前自查：`grep -rniE '你的服务器地址|用户名|私钥' test/ src/ docs/` 之类的敏感词扫描；拿不准就先问
 - 若发现历史中有私密信息：用 git-filter-repo 重写历史（`--invert-paths` / `--replace-text`）+ 强制推送 + **立即轮换相关凭据**（公网可见过的私钥视同已泄露），并同步清理 GitHub 侧缓存/请求支持删除
 
-## 打包（改 .vscodeignore / package.json 必读）
+## 打包（改 .vscodeignore / package.json / scripts/ 必读）
 
 - 绝不把 `node_modules/**` 加回 `.vscodeignore`——vsix 必须带 node-pty 预编译二进制，否则客户端终端失去真 pty，Ctrl+C 失效（0.1.9/0.1.10 因此回退）
 - 打 vsix 后用 `unzip -l *.vsix | grep node-pty` 确认二进制在包内
-- **CI 打包（.github/workflows/release.yml / ci.yml）禁止 `vsce package --no-dependencies`**：该标志产出 ~380KB 的残缺 vsix（缺 node-pty 与 ssh2），导致客户端终端失去真 pty、持久 SSH/SFTP 直接不可用——CI 必须用默认打包并带产物验证（node-pty prebuilds ≥ 8、ssh2 在包内），改动 CI 打包逻辑后必须本地跑通验证命令
-- **dependencies 只允许 node-pty 和 ssh2**（均为运行时必需：node-pty 提供真 pty；ssh2 提供持久 SSH 连接 + SFTP，纯 JS 体积小）：dompurify/marked 的 npm 包源码不用（webview 走 media/vendor 的 UMD），必须放 devDependencies，否则 vsce 把它们打进 vsix 白白膨胀 20+MB
+- **编译打包统一入口**：本地与 GitHub CI/CD 都跑 `npm run package`（scripts/package.mjs：tsc → esbuild bundle → vsce → 产物验证）；运行时加载 `dist/extension.js`（esbuild 单文件 bundle，package.json main 指向它），`out/` 仅供 e2e 测试 require——**改打包方式只改 scripts/ + package.json + .vscodeignore，CI（.github/workflows/*.yml）只引用 `npm run build` / `npm run package`，禁止在 CI 里另写一套打包命令**
+- **dependencies 只允许 node-pty**（原生模块无法 bundle，必须留在 node_modules 进 vsix）；**ssh2 在 devDependencies**（被 esbuild 打进 dist bundle，运行时不再需要 node_modules/ssh2）；dompurify/marked 的 npm 包源码不用（webview 走 media/vendor 的 UMD），必须放 devDependencies，否则 vsce 把它们打进 vsix 白白膨胀 20+MB
+- vsix 裁剪约束：.vscodeignore 必须排除 node-pty 的 `*.pdb`（~20MB 调试符号）、`third_party`/`src`/`scripts`/`typings`/`node_modules`（编译期/源码）、`out/**`；**正常 vsix 应在 ~2MB 量级**——打包后若明显变大（>3MB），检查是否有新依赖/文件回退进包
 - `@types/*` 永远只在 devDependencies，vsce 不会打包
+- **涉及编译/打包/依赖/CI 的改动，必须同时审视 `.github/workflows/` 是否要同步**（CI 引用 npm scripts，一般改 scripts/ 即可自动同步，但要确认 yml 没有硬编码旧命令）；改 esbuild 入口/依赖布局后必须本地 `npm run package` 跑通并看产物验证输出
 
 ## SSH 传输层（src/ssh/sshSession.ts + remoteExec.ts）
 

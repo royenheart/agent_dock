@@ -22,7 +22,7 @@
   "untrustedWorkspaces": {
     "supported": true
   },
-  "main": "./out/extension.js",
+  "main": "./dist/extension.js",
   "contributes": {
     "viewsContainers": {
       "activitybar": [
@@ -626,7 +626,9 @@
     "test:e2e": "xvfb-run -a node test/e2e/runTest.js",
     "test:e2e:reload:phase1": "AGENTWS_RELOAD_PHASE=1 xvfb-run -a node test/e2e/runTest.js",
     "test:e2e:reload:phase2": "AGENTWS_RELOAD_PHASE=2 xvfb-run -a node test/e2e/runTest.js",
-    "vscode:prepublish": "npm run compile"
+    "vscode:prepublish": "npm run build",
+    "build": "tsc -p ./ && node scripts/build.mjs",
+    "package": "node scripts/package.mjs"
   },
   "devDependencies": {
     "@types/node": "^22.10.0",
@@ -635,14 +637,15 @@
     "@vscode/test-electron": "^3.0.0",
     "@vscode/vsce": "^3.9.2",
     "dompurify": "^3.4.12",
+    "esbuild": "^0.28.1",
     "marked": "^18.0.6",
     "mocha": "^11.7.6",
-    "typescript": "^5.7.0"
+    "typescript": "^5.7.0",
+    "ssh2": "^1.17.0"
   },
   "l10n": "./l10n",
   "dependencies": {
-    "node-pty": "^1.2.0-beta.14",
-    "ssh2": "^1.17.0"
+    "node-pty": "^1.2.0-beta.14"
   },
   "repository": {
     "type": "git",

@@ -17,17 +17,12 @@ jobs:
           node-version: 24
           cache: npm
       - run: npm ci
-      - run: npm run compile
+      # 编译与打包统一走 scripts/（build.mjs esbuild bundle + package.mjs 打包+验证），
+      # 与本地 `npm run package` 完全同一入口——改打包方式只需改 scripts/ 与 package.json
+      - run: npm run build
       - run: npm run test:unit
-      - name: Package extension
-        # 必须打包 dependencies（node-pty + ssh2）：--no-dependencies 会产出缺运行时
-        # 依赖的 vsix（~380KB），导致客户端终端失去真 pty、持久 SSH/SFTP 不可用
-        run: npx @vscode/vsce package
-      - name: Verify runtime deps are bundled (packaging red line)
-        run: |
-          test "$(unzip -l *.vsix | grep -c 'node-pty')" -gt 0
-          test "$(unzip -l *.vsix | grep -c 'node-pty/prebuilds/.*\.node')" -ge 8
-          test "$(unzip -l *.vsix | grep -c 'ssh2/')" -gt 0
+      - name: Package + verify (unified entry)
+        run: npm run package
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
