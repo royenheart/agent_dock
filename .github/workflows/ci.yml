@@ -19,3 +19,10 @@ jobs:
       - run: npm run test:unit
       - name: E2E (real VS Code, xvfb)
         run: xvfb-run -a node test/e2e/runTest.js
+      # 打包产物防回归：vsix 必须带 node-pty（含预编译二进制）与 ssh2，
+      # 否则客户端终端失去 pty / 持久 SSH+SFTP 不可用（曾因 --no-dependencies 漏打）
+      - name: Package and verify runtime deps
+        run: |
+          npx @vscode/vsce package --out /tmp/ci-check.vsix
+          test "$(unzip -l /tmp/ci-check.vsix | grep -c 'node-pty/prebuilds/.*\.node')" -ge 8
+          test "$(unzip -l /tmp/ci-check.vsix | grep -c 'ssh2/')" -gt 0

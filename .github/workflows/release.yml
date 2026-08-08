@@ -20,7 +20,14 @@ jobs:
       - run: npm run compile
       - run: npm run test:unit
       - name: Package extension
-        run: npx @vscode/vsce package --no-dependencies
+        # 必须打包 dependencies（node-pty + ssh2）：--no-dependencies 会产出缺运行时
+        # 依赖的 vsix（~380KB），导致客户端终端失去真 pty、持久 SSH/SFTP 不可用
+        run: npx @vscode/vsce package
+      - name: Verify runtime deps are bundled (packaging red line)
+        run: |
+          test "$(unzip -l *.vsix | grep -c 'node-pty')" -gt 0
+          test "$(unzip -l *.vsix | grep -c 'node-pty/prebuilds/.*\.node')" -ge 8
+          test "$(unzip -l *.vsix | grep -c 'ssh2/')" -gt 0
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
