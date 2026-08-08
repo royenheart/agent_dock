@@ -1,3 +1,72 @@
+## v0.2.0 (2026-08-08)
+
+### Feat
+
+- unlock other-server files for editing (SFTP write path)
+- persistent SSH + SFTP transport (ssh2), local-sshd e2e sandbox
+- update terminal and workspace sync
+
+### Fix
+
+- pre-check node-pty binaries before require, harden terminal restore
+- host key verification for non-default-port servers ([host]:port)
+
+## v0.1.10 (2026-08-03)
+
+## v0.1.9 (2026-08-03)
+
+### Feat
+
+- tree/persistence robustness and right-click remote refresh
+- live refresh & robust polling for remote server files
+
+### Fix
+
+- ssh exec robustness — EPIPE, output cap, cancellation, semaphore
+
+## v0.1.8 (2026-07-28)
+
+### Feat
+
+- add client terminal
+
+## v0.1.7 (2026-07-28)
+
+### Fix
+
+- port forwarding on selected server & settings sync across servers
+
+## v0.1.6 (2026-07-26)
+
+### Feat
+
+- add port forwards
+
+## v0.1.5 (2026-07-26)
+
+### Fix
+
+- settings server sync
+
+## v0.1.4 (2026-07-22)
+
+### Feat
+
+- configurable ssh persist, stale-while-revalidate, README refresh
+- targeted refresh, persisted snapshots, longer-lived ssh connections
+
+## v0.1.3 (2026-07-21)
+
+### Feat
+
+- output-channel logging + non-blocking remote ops with skip/timeout
+
+## v0.1.2 (2026-07-21)
+
+### Feat
+
+- remote read-only file preview (plan A)
+
 ## v0.1.11 (2026-08-08)
 
 ### Fix
