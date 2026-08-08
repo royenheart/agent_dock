@@ -181,7 +181,7 @@ export class SshSession {
     log.child('ssh').warn(`persistent connect failed for ${this.server.name} (backoff ${this.backoffMs}ms): ${String((lastErr as Error)?.message ?? lastErr)}`);
     if (isHostKeyFailure(lastErr)) {
       throw new SshTransportError(
-        `host key verification failed for ${this.server.name} (add the host to ~/.ssh/known_hosts or set agentDock.sshHostKeyMode=accept-new)`,
+        `host key verification failed for ${this.server.name} (add the host to ~/.ssh/known_hosts or set agentDock.sshHostKeyMode=accept-new; frp/port-proxy targets that change host keys usually need accept-new)`,
         lastErr,
       );
     }
