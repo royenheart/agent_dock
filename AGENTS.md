@@ -25,6 +25,13 @@
 - 连接失败有指数退避（1s→30s），防止轮询对不可达服务器反复发起 10s 超时连接
 - 会话池（sessionFor）在 extension.ts deactivate 时 `disposeSshSessions()` 释放
 
+## 远程文件可写（remoteFsProvider.ts + extension.ts 必须同步）
+
+- **其他服务器文件必须可写**：`RemoteFsProvider.stat()` 不得返回 `FilePermission.Readonly`，`registerFileSystemProvider` 的 `isReadonly` 必须为 `false`——任一侧改回只读 = 编辑器/资源管理器全部只读，属回退
+- 写路径走 SFTP：`writeFile`（临时文件 + rename 原子写）、`createDirectory`、`delete`（目录递归用 exec `rm -rf` 通道）、`rename`（目标存在时先删再 rename）
+- `readFile` 保留 8 MiB 预览上限（防大文件进内存）；超限文件无法在编辑器打开属预期，不是只读
+- tree 中 remoteFsEntry 的 tooltip 文案含 "editable"，与可写行为一致
+
 ## 客户端终端（src/ssh/clientTerminal.ts）
 
 - 管道降级路径（无 node-pty）里 Ctrl+C（`\x03`）必须转发：pty 包装子进程写 stdin，纯管道 shell 发 SIGINT——禁止静默吞掉只回显 `^C`

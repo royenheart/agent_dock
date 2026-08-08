@@ -469,7 +469,7 @@ export class WorkspaceProvider implements vscode.TreeDataProvider<Node> {
         );
         item.contextValue = node.isDir ? 'remoteFsDir' : 'remoteFsFile';
         item.iconPath = node.isDir ? vscode.ThemeIcon.Folder : vscode.ThemeIcon.File;
-        item.tooltip = t('Live read-only preview on {0} (auto-refreshes)', node.serverKey);
+        item.tooltip = t('Live file on {0} (auto-refreshes, editable)', node.serverKey);
         if (!node.isDir) {
           const uri = remoteUri(node.serverKey, node.path);
           item.resourceUri = uri;

@@ -176,6 +176,11 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
   // write path (SFTP): writeFile / createDirectory / rename / delete
   const W = '/tmp/agentdock-provider/w.txt';
+  // 可写门禁：stat 不得返回 Readonly（否则编辑器/资源管理器只读）
+  const stInfo = await provider.stat(remoteUri(server.name, '/tmp/agentdock-provider'));
+  if (stInfo.permissions !== undefined) {
+    throw new Error('remote files must be writable: stat must not report Readonly permission');
+  }
   await provider.writeFile(remoteUri(server.name, W), Buffer.from('v1'), { create: true, overwrite: false });
   const w1 = await provider.readFile(remoteUri(server.name, W));
   if (Buffer.from(w1).toString('utf8') !== 'v1') throw new Error('writeFile content mismatch');

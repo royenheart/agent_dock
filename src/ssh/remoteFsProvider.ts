@@ -356,8 +356,7 @@ export class RemoteFsProvider implements vscode.FileSystemProvider {
       ctime: st.mtime * 1000,
       mtime: st.mtime * 1000,
       size: st.size,
-      // 保持「只读预览」产品行为不变；放开写权限是独立的产品决策
-      permissions: vscode.FilePermission.Readonly,
+      // 不返回 Readonly：其他服务器文件可写（编辑器保存走 writeFile → SFTP 原子写）
     };
   }
 

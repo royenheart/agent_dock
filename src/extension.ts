@@ -89,7 +89,9 @@ export function activate(context: vscode.ExtensionContext): AgentDockApi {
     vscode.window.registerFileDecorationProvider(decorations),
     vscode.workspace.registerFileSystemProvider(REMOTE_SCHEME, remoteFsProvider, {
       isCaseSensitive: true,
-      isReadonly: true,
+      // 其他服务器文件可写（writeFile/createDirectory/delete/rename 走 SFTP）；
+      // 改回 true = 编辑器/资源管理器全部只读，属回退
+      isReadonly: false,
     }),
     { dispose: () => remoteFsProvider.disposeAll() },
     vscode.window.registerWebviewViewProvider(SettingsViewProvider.viewType, settings, {
