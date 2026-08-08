@@ -1,3 +1,13 @@
+## v0.2.2 (2026-08-08)
+
+### Feat
+
+- update readme demonstration
+
+### Fix
+
+- **build**: externalize *.node so esbuild skips ssh2 native crypto binding
+
 ## v0.2.1 (2026-08-08)
 
 ### Feat
