@@ -27,10 +27,13 @@ async function main() {
     extensionDevelopmentPath: root,
     extensionTestsPath: path.resolve(root, 'test', 'e2e', 'suite', 'index.js'),
     extensionTestsEnv: {
-      HOME: fx.HOME,
+      // remote-edit 等需要真实 SSH 的 suite：HOME 指向 sshd 沙箱（含密钥 + known_hosts），
+      // 否则用 fixture HOME
+      HOME: process.env.AGENTDOCK_E2E_HOME || fx.HOME,
       AGENTWS_E2E_REALWS: fx.REALWS,
       VSCODE_IPC_HOOK_CLI: '',
       AGENTWS_RELOAD_PHASE: process.env.AGENTWS_RELOAD_PHASE || '',
+      AGENTWS_SUITE: process.env.AGENTWS_SUITE || '',
     },
     launchArgs: [
       wsPath,

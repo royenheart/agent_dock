@@ -38,13 +38,17 @@ class FileReporter {
 
 module.exports.run = function run(testsRoot, cb) {
   mark(`run() called, testsRoot=${testsRoot}`);
-  // 两阶段 reload 测试：AGENTWS_RELOAD_PHASE=1/2 时只跑 reload.test.js（跨窗口验证恢复），
+  // suite 选择：AGENTWS_RELOAD_PHASE=1/2 → reload.test.js（跨窗口恢复验证）；
+  // AGENTWS_SUITE=remote-edit → remote-edit.test.js（远程文件编辑器级读写，配本地 sshd）；
   // 否则跑常规 suite（extension.test.js）
   const reloadPhase = process.env.AGENTWS_RELOAD_PHASE;
+  const suiteName = process.env.AGENTWS_SUITE;
   const testFile = reloadPhase
     ? path.join(__dirname, 'reload.test.js')
-    : path.join(__dirname, 'extension.test.js');
-  mark(`reload phase: ${reloadPhase || '(none)'}, test file: ${testFile}`);
+    : suiteName === 'remote-edit'
+      ? path.join(__dirname, 'remote-edit.test.js')
+      : path.join(__dirname, 'extension.test.js');
+  mark(`suite: ${reloadPhase ? 'reload phase ' + reloadPhase : suiteName || 'default'}, test file: ${testFile}`);
   mark('test file exists: ' + fs.existsSync(testFile) + ' (' + testFile + ')');
   const mocha = new Mocha({ ui: 'tdd', timeout: 120000, reporter: FileReporter });
   mocha.addFile(testFile);
