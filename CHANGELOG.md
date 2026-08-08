@@ -1,3 +1,13 @@
+## v0.2.1 (2026-08-08)
+
+### Feat
+
+- esbuild bundling + unified package entry (7.8MB → 1.97MB vsix)
+
+### Fix
+
+- **ci**: stop using vsce package --no-dependencies — bundle runtime deps
+
 ## v0.2.0 (2026-08-08)
 
 ### Feat
