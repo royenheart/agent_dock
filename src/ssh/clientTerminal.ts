@@ -1,4 +1,6 @@
+import * as fs from 'node:fs';
 import * as os from 'node:os';
+import * as path from 'node:path';
 import { spawn, type ChildProcess } from 'node:child_process';
 import * as vscode from 'vscode';
 import type { ServerConfig } from '../model';
@@ -74,8 +76,46 @@ interface NodePtyModule {
 let nodePtyCache: NodePtyModule | null | undefined;
 
 /**
- * 加载可选原生依赖 node-pty；未安装 / ABI 不符 / 被 AGENTDOCK_NO_NODE_PTY
- * 显式禁用（诊断与测试用）时返回 undefined，调用方退回管道后端。
+ * 预检 node-pty 的原生二进制是否完好（存在且非空）。
+ * Windows 上更新 vsix 时旧扩展宿主仍加载着 .node 文件（文件锁），新文件可能
+ * 替换不完整/被截断为 0 字节；此时 require 一个损坏的原生模块可能直接崩掉
+ * 扩展宿主进程（VSCode 因此"暂时禁用所有已安装的扩展"）。预检不通过就降级
+ * 管道后端，绝不 require。
+ */
+function nodePtyBinariesIntact(): boolean {
+  try {
+    // require.resolve('node-pty/package.json') 只解析 JSON，不加载原生模块
+    const pkgDir = path.dirname(require.resolve('node-pty/package.json'));
+    const archDir = `prebuilds/${process.platform}-${process.arch}`;
+    // 与 node-pty lib/utils.js loadNativeModule 的目录顺序一致：
+    // build/Release → build/Debug → prebuilds/<platform>-<arch>
+    const names = process.platform === 'win32' ? ['conpty.node', 'conpty_console_list.node', 'pty.node'] : ['pty.node'];
+    const candidates: string[] = [];
+    for (const sub of ['build/Release', 'build/Debug', archDir]) {
+      for (const n of names) {
+        candidates.push(path.join(pkgDir, sub, n));
+      }
+    }
+    const intact = candidates.some((f) => {
+      try {
+        return fs.statSync(f).size > 0;
+      } catch {
+        return false;
+      }
+    });
+    if (!intact) {
+      log.child('term').warn(`node-pty native binaries missing or empty; checked: ${candidates.join(', ')}`);
+    }
+    return intact;
+  } catch {
+    // node-pty 未安装
+    return false;
+  }
+}
+
+/**
+ * 加载可选原生依赖 node-pty；未安装 / ABI 不符 / 原生二进制不完整 / 被
+ * AGENTDOCK_NO_NODE_PTY 显式禁用（诊断与测试用）时返回 undefined，调用方退回管道后端。
  */
 function loadNodePty(): NodePtyModule | undefined {
   if (process.env.AGENTDOCK_NO_NODE_PTY) {
@@ -83,6 +123,11 @@ function loadNodePty(): NodePtyModule | undefined {
   }
   if (nodePtyCache !== undefined) {
     return nodePtyCache ?? undefined;
+  }
+  if (!nodePtyBinariesIntact()) {
+    nodePtyCache = null;
+    log.child('term').warn('node-pty binaries not intact, client terminals fall back to pipe mode');
+    return undefined;
   }
   try {
     // 可选依赖：vsix 里带预编译二进制则命中，缺失时 catch 进管道降级
@@ -374,20 +419,25 @@ export function initClientTerminalPersistence(memento: vscode.Memento): void {
   // 直接查会把后一个同名 saved 条目误判成"已存在"而跳过（同名终端每次 reload 塌缩成一个）
   const preexisting = [...vscode.window.terminals];
   for (const d of saved) {
-    // 扩展宿主 reload（非窗口 reload）时旧终端可能仍存活，按名去重避免重复；
-    // 只认 agent-dock pty 终端——同名的原生终端（如 fsOpenTerminal 恢复的）不得挡路
-    const survivor = preexisting.find((t) => t.name === d.name && isAgentDockTerminal(t));
-    if (survivor) {
-      tlog.debug(`skip restoring "${d.name}": a terminal with that name already exists`);
-      // 存活终端不在本进程的 liveTerminals 里：补记，否则它的 rename/close 都同步不到
-      liveTerminals.set(survivor, d);
-      continue;
-    }
-    const term = createTerminalFromSaved(d);
-    if (term) {
-      liveTerminals.set(term, d);
-      term.show(true); // 恢复到终端面板，但不抢编辑器焦点
-      tlog.debug(`restored terminal "${d.name}" kind=${d.kind} server=${d.serverName ?? '-'}`);
+    try {
+      // 扩展宿主 reload（非窗口 reload）时旧终端可能仍存活，按名去重避免重复；
+      // 只认 agent-dock pty 终端——同名的原生终端（如 fsOpenTerminal 恢复的）不得挡路
+      const survivor = preexisting.find((t) => t.name === d.name && isAgentDockTerminal(t));
+      if (survivor) {
+        tlog.debug(`skip restoring "${d.name}": a terminal with that name already exists`);
+        // 存活终端不在本进程的 liveTerminals 里：补记，否则它的 rename/close 都同步不到
+        liveTerminals.set(survivor, d);
+        continue;
+      }
+      const term = createTerminalFromSaved(d);
+      if (term) {
+        liveTerminals.set(term, d);
+        term.show(true); // 恢复到终端面板，但不抢编辑器焦点
+        tlog.debug(`restored terminal "${d.name}" kind=${d.kind} server=${d.serverName ?? '-'}`);
+      }
+    } catch (err) {
+      // 单个终端恢复失败（如 node-pty 不可用、配置缺失）不拖垮整个 activate
+      tlog.warn(`failed to restore terminal "${d.name}": ${String(err)}`);
     }
   }
   if (liveTerminals.size > 0) {
