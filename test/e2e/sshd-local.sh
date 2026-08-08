@@ -46,8 +46,9 @@ EOF
     i=$((i+1)); sleep 0.2
   done
   # record host key into the sandbox known_hosts (persistent-path verification)
-  # ssh-keyscan 对非默认端口输出 [127.0.0.1]:PORT 形式；剥成纯主机名以便 known_hosts 校验匹配
-  ssh-keyscan -p "$PORT" 127.0.0.1 2>/dev/null | sed -E 's/^\[([0-9.]+)\]:[0-9]+ /\1 /' > "$ROOT/home/.ssh/known_hosts"
+  # 保留 ssh-keyscan 的 [127.0.0.1]:PORT 形式 —— 与真实用户场景一致（非默认端口服务器
+  # 在 known_hosts 里就是带方括号端口的形式），用于回归「端口形式 host key 匹配」缺陷
+  ssh-keyscan -p "$PORT" 127.0.0.1 2>/dev/null > "$ROOT/home/.ssh/known_hosts"
   cat > "$ROOT/env" <<EOF
 export AGENTDOCK_E2E_HOST=127.0.0.1
 export AGENTDOCK_E2E_PORT=$PORT

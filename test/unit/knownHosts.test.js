@@ -60,6 +60,20 @@ test('checkHostKey: hashed entry matches only with the right host+key', () => {
   assert.equal(checkHostKey(entries, ['hash-host'], fakeKey('x')), false, 'wrong key must not match');
 });
 
+test('checkHostKey: non-default-port hosts match the [host]:port known_hosts form', () => {
+  // OpenSSH 对非 22 端口的服务器在 known_hosts 里记录为 [host]:port（CLI 写盘形式），
+  // 校验时必须把 `[host]:port` 作为匹配候选，否则持久连接永远 Host denied
+  const key = fakeKey('portform');
+  const entries = parseKnownHosts(`[my-host]:40608 ssh-ed25519 ${key.toString('base64')}\n`);
+  assert.equal(checkHostKey(entries, ['[my-host]:40608'], key), true, 'bracketed candidate must match');
+  assert.equal(checkHostKey(entries, ['my-host'], key), false, 'bare hostname must NOT match the bracketed entry');
+  // 哈希条目：OpenSSH 以 `[host]:port` 作为 hash 输入
+  const salt = Buffer.from('salt2');
+  const h = hashHost('[hash-host]:40620', salt);
+  const entries2 = parseKnownHosts(`|1|${salt.toString('base64')}|${h.toString('base64')} ssh-ed25519 ${key.toString('base64')}\n`);
+  assert.equal(checkHostKey(entries2, ['[hash-host]:40620'], key), true, 'hashed [host]:port candidate must match');
+});
+
 test('checkHostKey: wildcard patterns and comma lists', () => {
   const key = fakeKey('k3');
   const entries = parseKnownHosts(`*.example.com,10.0.0.? ssh-rsa ${key.toString('base64')}\n`);

@@ -32,7 +32,9 @@ if (!KEY || !HOME) {
 
 const server = { name: 'e2e-sshd', host: HOST, user: USER, port: PORT, folders: [] };
 const opts = {
-  hostKeyMode: 'accept-new',
+  // 'yes' 严格校验：known_hosts 里是 [127.0.0.1]:2222 形式（sshd-local.sh 保留真实格式），
+  // 回归「非默认端口主机密钥校验 Host denied」缺陷
+  hostKeyMode: 'yes',
   knownHostsFiles: [path.join(HOME, '.ssh', 'known_hosts')],
   identityFiles: [KEY],
 };

@@ -211,12 +211,31 @@ export class SshSession {
 
   private async buildConnectConfig(cand: AuthCandidate, resolved: ResolvedSshHost): Promise<ConnectConfig> {
     const home = os.homedir();
-    const hostnames = [resolved.hostName, this.server.host].filter((h, i, a) => h && a.indexOf(h) === i);
+    // known_hosts 匹配候选：非默认端口时 OpenSSH 记录为 `[host]:port` 形式
+    // （哈希条目同样以 `[host]:port` 为输入），必须把带端口形式一并作为候选，
+    // 否则 22 之外端口的服务器永远 Host denied。
+    const port = this.server.port ?? resolved.port ?? 22;
+    const hostnames: string[] = [];
+    const addHost = (h: string | undefined): void => {
+      if (!h || hostnames.includes(h)) {
+        return;
+      }
+      hostnames.push(h);
+    };
+    for (const h of [this.server.host, resolved.hostName]) {
+      if (!h) {
+        continue;
+      }
+      if (port !== 22) {
+        addHost(`[${h}]:${port}`);
+      }
+      addHost(h);
+    }
     const mode = this.opts.hostKeyMode ?? 'yes';
     const knownHostsFiles = this.opts.knownHostsFiles ?? [path.join(home, '.ssh', 'known_hosts'), '/etc/ssh/ssh_known_hosts'];
     const cfg: ConnectConfig = {
       host: resolved.hostName,
-      port: this.server.port ?? resolved.port ?? 22,
+      port,
       username: this.server.user ?? resolved.user ?? os.userInfo().username,
       readyTimeout: this.opts.readyTimeoutMs ?? 10_000,
       keepaliveInterval: this.opts.keepaliveIntervalMs ?? 15_000,
