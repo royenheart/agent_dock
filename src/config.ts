@@ -236,14 +236,16 @@ export function getCurrentContext(): CurrentContext {
 // 远程窗口下扩展宿主就在远程机上，authority 不可得时用 os.hostname() 即远程机名
 export function getCurrentDisplayName(): string {
   const ctx = getCurrentContext();
+  // 隐私：允许用 AGENTDOCK_HOSTNAME 覆盖真实主机名（录屏/共享截图/在意主机名隐私的用户）
+  const override = process.env.AGENTDOCK_HOSTNAME;
   if (ctx.isLocal) {
-    return os.hostname() || 'Local';
+    return override || os.hostname() || 'Local';
   }
   if (ctx.sshHost) {
     const match = findCurrentServer(getServers(), ctx.sshHost);
     return match?.name ?? ctx.sshHost;
   }
-  return os.hostname() || ctx.remoteName || 'remote';
+  return override || os.hostname() || ctx.remoteName || 'remote';
 }
 
 /**

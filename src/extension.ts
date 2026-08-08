@@ -4,6 +4,7 @@ import { ExpansionState } from './tree/expansionState';
 import { SessionDecorationProvider } from './tree/sessionDecorations';
 import { remoteFsProvider, REMOTE_SCHEME } from './ssh/remoteFsProvider';
 import { disposeSshSessions } from './ssh/sshSession';
+import { maybeRunDemo } from './demo';
 import { SettingsViewProvider } from './views/settingsView';
 import { SessionPanel } from './views/sessionPanel';
 import { registerCommands } from './commands';
@@ -22,6 +23,8 @@ export interface AgentDockApi {
   expansion: ExpansionState;
   /** workspaceState（e2e 验证跨窗口持久化用）。 */
   workspaceState: vscode.Memento;
+  /** Agent Workspace TreeView（演示录屏/测试驱动 UI 展开用）。 */
+  treeView: vscode.TreeView<Node>;
 }
 
 export function activate(context: vscode.ExtensionContext): AgentDockApi {
@@ -164,7 +167,10 @@ export function activate(context: vscode.ExtensionContext): AgentDockApi {
     }),
   );
 
-  return { provider, decorations, expansion: expansionState, workspaceState: context.workspaceState };
+  // 演示模式（AGENTDOCK_DEMO=1，仅 README 录屏脚本使用；正常用户不触发）
+  void maybeRunDemo(provider, tree);
+
+  return { provider, decorations, expansion: expansionState, workspaceState: context.workspaceState, treeView: tree };
 }
 
 export function deactivate(): void {

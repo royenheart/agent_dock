@@ -628,7 +628,8 @@
     "test:e2e:reload:phase2": "AGENTWS_RELOAD_PHASE=2 xvfb-run -a node test/e2e/runTest.js",
     "vscode:prepublish": "npm run build",
     "build": "tsc -p ./ && node scripts/build.mjs",
-    "package": "node scripts/package.mjs"
+    "package": "node scripts/package.mjs",
+    "demo:record": "bash scripts/record-demo.sh"
   },
   "devDependencies": {
     "@types/node": "^22.10.0",

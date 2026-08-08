@@ -52,6 +52,29 @@ npm run test:e2e     # @vscode/test-electron + xvfb：真实 VS Code 中验证�
 
 改动后至少跑 `npm run test:unit`（当前 128 项，全绿才算完成）。
 
+## 演示 GIF 录制（README）
+
+README 的演示 GIF 全部由**本地沙箱**自动录制，不连接任何真实服务器、不写入个人数据：
+
+```bash
+npm run demo:record          # = bash scripts/record-demo.sh
+# 可选：KEEP_FRAMES=1 npm run demo:record   # 保留 /tmp/agentdock-demo/frames 便于审片
+```
+
+管线（`scripts/record-demo.sh`）：
+
+1. 起两台本地 sshd（端口 2222/2223）+ fixture 假数据（`scripts/demo-fixtures.mjs`）
+2. 隔离 HOME / user-data；`~/.ssh/config` 写别名 `demo-sshd-a/b`（画面只出现别名）
+3. `AGENTDOCK_HOSTNAME='Local workstation'` 覆盖真实主机名；沙箱 `PS1=demo@workstation`
+4. Xvfb 里启动 VS Code（`--remote-debugging-port`），`src/demo.ts` 自动跑演示序列
+5. `scripts/demo-record.mjs` 经 CDP `Page.startScreencast` 连续抓帧，按 marker 分段
+6. SessionPanel / 设置等 webview 在无合成器的 Xvfb 下常不绘制——用 `scripts/render-demo-html.mjs` + headless Chrome 补帧
+7. `scripts/demo-gif.mjs` 定 fps 重采样、折叠静态帧、加中文标注 → `docs/demo/*.gif`
+
+依赖：Linux + `xvfb` + `magick`（ImageMagick 7）+ `google-chrome` + 中文字体（wqy-microhei）+ 本机 `/usr/share/code/code`。无需 ffmpeg / 窗口管理器。
+
+隐私自检：产物与中间帧不得出现真实用户名、主机名、私钥路径；服务器一律为 `demo-sshd-*` 别名。
+
 ### 跨窗口 reload 恢复 e2e（目录展开状态 / 终端重建，两阶段）
 
 对应历史缺陷：reload 后目录展开状态重置、客户端终端不恢复名字/不重建。用**同一个 user-data-dir 开两个窗口**验证恢复：

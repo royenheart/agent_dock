@@ -10,6 +10,16 @@
   <img src="media/social.png" width="880" alt="Agent Dock — 跨服务器 AI Agent 会话工作区">
 </div>
 
+## 演示
+
+| 功能 | 演示 |
+|---|---|
+| 多服务器工作区 | <img src="docs/demo/demo-multi-server.gif" width="420" alt="多服务器 Agent Workspace 树"> |
+| 远程文件编辑保存（SFTP） | <img src="docs/demo/demo-remote-edit.gif" width="420" alt="打开远程服务器 A/B 文件并逐字编辑保存"> |
+| Sessions · Transcript | <img src="docs/demo/demo-sessions.gif" width="420" alt="跨服务器会话聚合与 Transcript（thinking / 工具卡 / todo）"> |
+| 会话一键在终端继续 | <img src="docs/demo/demo-resume.gif" width="420" alt="ssh 别名恢复会话，不暴露真实主机"> |
+| Agent 设置：Skills / MCP | <img src="docs/demo/demo-skills.gif" width="420" alt="MCPs / Skills / Plugins / Hooks 解析"> |
+
 ---
 
 一个窗口，统览多台服务器上的 AI 编程会话：VS Code 的 workspace 只能展示当前连接服务器的文件，Agent Dock 在此基础上把 **opencode / Codex CLI / Claude Code** 的历史会话按服务器聚合到同一棵树里——当前服务器看文件+会话，其他服务器只看会话，随时切换连接、恢复对话。
@@ -18,7 +28,7 @@
 
 - **统一 Workspace 树**（活动栏「Agent Dock」+ 内置「资源管理器」面板双入口，内容同步）
   - 当前服务器：workspace 目录的文件树 + `sessions` 子节点下的 agent 会话（目录 → sessions → 各会话）
-  - 其他服务器：显式添加的目录及其会话，**并可懒加载浏览远程文件**（单层 `ls`、快照缓存、只读打开，8 MiB 预览上限）；其余会话收进「其他目录会话」
+  - 其他服务器：显式添加的目录及其会话，**并可懒加载浏览/编辑远程文件**（单层 `ls`、快照缓存、SFTP 可写保存，8 MiB 预览上限）；其余会话收进「其他目录会话」
   - 内置资源管理器中，含会话的目录显示 **AI 徽标**；文件节点有完整右键菜单（打开/复制路径/新建/重命名/删除/终端打开/从工作区移除，操作只刷新对应目录）
 - **快照与刷新**：会话与远程目录列表持久化到磁盘——reload 后即刻显示上次快照，并按你的展开状态**定向自动重验证**（只刷新你打开的，不做全量）；手动 Refresh 强制全量重扫
 - **添加目录**：路径浏览下拉框（输入 `/` 或 `~` 自动补全子目录，本地与远程一致），或「连接至其他服务器」→ ssh config 主机列表 → 选择远程目录固定到树中；操作与原生「将文件夹添加/移出工作区」完全同步
