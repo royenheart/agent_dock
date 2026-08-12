@@ -3,6 +3,7 @@ import * as vscode from 'vscode';
 import type { PortForward, ServerConfig } from './model';
 import { findCurrentServer, hostMatches, mergeServersByName, parseServerList, planRegistration } from './serverRegistration';
 import { createSerialQueue } from './batch';
+import { normPath } from './paths';
 import { log } from './log';
 
 export { findCurrentServer, hostMatches };
@@ -151,6 +152,27 @@ export function addServerFolders(name: string, folders: string[]): Promise<void>
   });
 }
 
+/**
+ * 从服务器的固定目录列表移除路径（仅取消固定，不删除服务器上的真实目录）。
+ * 与 addServerFolders 走同一串行队列，避免并发读写互相覆盖。
+ * 两边都做 normPath 归一：树里展示的是归一后的路径，配置里存的可能是原始输入（如带尾部斜杠）。
+ */
+export function removeServerFolders(name: string, folders: string[]): Promise<void> {
+  return configQueue(async () => {
+    const servers = getServers();
+    const idx = servers.findIndex((s) => s.name === name);
+    if (idx < 0) {
+      return;
+    }
+    const removed = new Set(folders.map(normPath));
+    const kept = (servers[idx].folders ?? []).filter((f) => !removed.has(normPath(f)));
+    servers[idx] = { ...servers[idx], folders: kept };
+    await vscode.workspace
+      .getConfiguration(SECTION)
+      .update('servers', servers, vscode.ConfigurationTarget.Global);
+  });
+}
+
 export function updateServerForwards(name: string, forwards: PortForward[]): Promise<void> {
   return configQueue(async () => {
     const servers = getServers();
@@ -204,6 +226,19 @@ export function getRemoteAutoRefresh(): boolean {
 export function getRemoteWatchIntervalMs(): number {
   const seconds = vscode.workspace.getConfiguration(SECTION).get<number>('remoteWatchIntervalSeconds', 3);
   return Math.min(Math.max(seconds, 1), 60) * 1000;
+}
+
+/** 远程文件自动保存策略（与 files.autoSave 的取值一致，仅作用于 agentdock-remote 文件）。 */
+export type AutoSaveMode = 'off' | 'afterDelay' | 'onFocusChange' | 'onWindowChange';
+
+export function getAutoSaveMode(): AutoSaveMode {
+  const raw = vscode.workspace.getConfiguration(SECTION).get<string>('autoSave', 'off');
+  return raw === 'afterDelay' || raw === 'onFocusChange' || raw === 'onWindowChange' ? raw : 'off';
+}
+
+export function getAutoSaveDelayMs(): number {
+  const ms = vscode.workspace.getConfiguration(SECTION).get<number>('autoSaveDelay', 1000);
+  return Number.isFinite(ms) ? Math.min(Math.max(ms, 0), 60_000) : 1000;
 }
 
 export interface CurrentContext {

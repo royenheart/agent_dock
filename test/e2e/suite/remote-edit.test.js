@@ -38,7 +38,7 @@ suite('agent-dock remote editor read-write e2e', () => {
         [{ name: SERVER_NAME, host: E2E_HOST, user: E2E_USER, port: E2E_PORT, folders: [] }],
         vscode.ConfigurationTarget.Global,
       );
-    // 等待配置生效（onDidChangeConfiguration 会触发 provider.refresh）
+    // 等待配置生效（onDidChangeConfiguration 会触发树重绘，provider 的 serverFor 能解析到新配置）
     await new Promise((r) => setTimeout(r, 800));
   });
 

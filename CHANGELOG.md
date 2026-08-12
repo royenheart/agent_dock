@@ -1,3 +1,14 @@
+## Unreleased
+
+### Feat
+
+- auto-save for remote files of other servers (`agentDock.autoSave` + `agentDock.autoSaveDelay`, policies match native `files.autoSave`: `afterDelay` / `onFocusChange` / `onWindowChange`)
+- remove a pinned remote directory from the workspace via right-click (unpins it from `agentDock.servers`; the real directory on the server is not deleted)
+
+### Fix
+
+- adding a directory to a server no longer triggers a full tree refresh: caches (session / remote dir) are kept and already-expanded directory state is preserved
+
 ## v0.2.2 (2026-08-08)
 
 ### Feat

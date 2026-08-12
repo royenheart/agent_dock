@@ -12,6 +12,7 @@ import {
   getSessionLimit,
   getSshTimeoutMs,
   removeServer,
+  removeServerFolders,
   updateServerForwards,
 } from './config';
 import { resumeCommand } from './agents/resume';
@@ -25,7 +26,7 @@ import { openClientTerminal, sshSpawnSpec } from './ssh/clientTerminal';
 import { trackNativeTerminal } from './ssh/nativeTerminal';
 import { forwardSpec, setOnDidChange, startForward, stopForward } from './ssh/portForward';
 import { readSshConfigHosts, type SshHostEntry } from './ssh/sshConfig';
-import { pathBasename, uriFsPath } from './paths';
+import { normPath, pathBasename, uriFsPath } from './paths';
 import { pickDirectory, type SubdirsResult } from './views/dirPicker';
 import { SessionPanel, type SessionTarget } from './views/sessionPanel';
 import type { Node, WorkspaceProvider } from './tree/workspaceProvider';
@@ -376,7 +377,8 @@ async function addLocalDirectoryFlow(provider: WorkspaceProvider): Promise<void>
     uri: currentFileUri(result.path),
   });
   if (ok) {
-    provider.refresh();
+    // 只重绘树、保留缓存：避免全量刷新让已展开的目录状态被重置（onDidChangeWorkspaceFolders 也会再触发一次）
+    provider.refreshConfig();
   } else {
     vscode.window.showInformationMessage(t('Directory is already in the workspace'));
   }
@@ -702,6 +704,35 @@ export function registerCommands(context: vscode.ExtensionContext, provider: Wor
       );
     }
     return ok;
+  });
+
+  /** 把远程服务器的固定目录从工作区移除（只取消固定，不删除服务器上的真实目录）。 */
+  reg('agentDock.remoteFsRemoveFromWorkspace', async (node: FolderNode) => {
+    if (node?.kind !== 'folder' || node.workspaceUri) {
+      return;
+    }
+    const server = getServers().find((s) => s.name === node.serverKey);
+    if (!server) {
+      vscode.window.showErrorMessage(t('Server {0} not found in config', node.serverKey));
+      return;
+    }
+    // 未固定的目录（如其他会话目录派生的 folder 节点）没有可移除的固定项
+    if (!(server.folders ?? []).some((f) => normPath(f) === normPath(node.path))) {
+      vscode.window.showInformationMessage(t('{0} is not pinned to the workspace of {1}', node.label, server.name));
+      return;
+    }
+    const ok = await vscode.window.showWarningMessage(
+      t('Remove {0} from the workspace of {1}? (The directory itself is not deleted)', node.label, server.name),
+      { modal: true },
+      t('Remove'),
+    );
+    if (!ok) {
+      return;
+    }
+    await removeServerFolders(node.serverKey, [node.path]);
+    // 只重绘树、保留缓存：被移除的目录节点消失，其余目录展开状态不受影响
+    provider.refreshConfig();
+    vscode.window.showInformationMessage(t('Removed {0} from {1}', node.label, server.name));
   });
 
   reg('agentDock.portForwardAdd', async (node?: PortsRootNode | ServerNode) => {

@@ -362,6 +362,17 @@ export class WorkspaceProvider implements vscode.TreeDataProvider<Node> {
     this.onDidChangeEmitter.fire(undefined);
   }
 
+  /**
+   * 配置变更专用刷新：保留会话缓存与远程目录缓存（folders/forwards/服务器列表的变化
+   * 由 getChildren 重新读取配置即可），只重绘树。相比 refresh() 不触发会话重扫与
+   * 远程目录全量重拉——否则「添加目录」等配置写入会让已展开的目录状态被重置
+   * （子树短暂消失 / 展开态丢失）。
+   */
+  refreshConfig(): void {
+    this.wsPathsCache = undefined;
+    this.onDidChangeEmitter.fire(undefined);
+  }
+
   refreshNode(node?: Node): void {
     this.onDidChangeEmitter.fire(node);
   }

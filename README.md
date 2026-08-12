@@ -31,7 +31,7 @@
   - 其他服务器：显式添加的目录及其会话，**并可懒加载浏览/编辑远程文件**（单层 `ls`、快照缓存、SFTP 可写保存，8 MiB 预览上限）；其余会话收进「其他目录会话」
   - 内置资源管理器中，含会话的目录显示 **AI 徽标**；文件节点有完整右键菜单（打开/复制路径/新建/重命名/删除/终端打开/从工作区移除，操作只刷新对应目录）
 - **快照与刷新**：会话与远程目录列表持久化到磁盘——reload 后即刻显示上次快照，并按你的展开状态**定向自动重验证**（只刷新你打开的，不做全量）；手动 Refresh 强制全量重扫
-- **添加目录**：路径浏览下拉框（输入 `/` 或 `~` 自动补全子目录，本地与远程一致），或「连接至其他服务器」→ ssh config 主机列表 → 选择远程目录固定到树中；操作与原生「将文件夹添加/移出工作区」完全同步
+- **添加/移除目录**：路径浏览下拉框（输入 `/` 或 `~` 自动补全子目录，本地与远程一致），或「连接至其他服务器」→ ssh config 主机列表 → 选择远程目录固定到树中；右键远程固定目录「从工作区移除目录」即可取消固定（**只移出工作区，不删除服务器上的真实目录**）；本地操作与原生「将文件夹添加/移出工作区」完全同步
 - **会话 Transcript**：结构化渲染——markdown 正文（marked + DOMPurify，VS Code 官方同款管线）、折叠 thinking、工具卡片（输入+输出配对）、todo 清单、文件变更、模型切换与子代理标记、子会话嵌套
 - **用量与监控**：头部汇总行（模型 · in/out tokens · 缓存读写 · 费用 · skills 估算）；可展开的**会话监控面板**——每个 skill 的调用次数与估算 tokens（条形图对比）
 - **连接与恢复**：右键服务器 Connect（当前窗口切换到该服务器，基于 Remote-SSH）；会话一键「在终端中继续」（`opencode --session` / `codex resume` / `claude --resume`）；目录右键「新建会话…」
@@ -64,6 +64,10 @@
 | `agentDock.sshTimeoutSeconds` | `20` | 单次 SSH 远程操作超时（秒，5–120） |
 | `agentDock.sshConnectionPersist` | `8h` | SSH 主连接复用保持时长（`10m`/`8h`/`yes` 不限，`0` 禁用） |
 | `agentDock.logLevel` | `info` | 「Agent Dock」输出通道日志级别（debug/info/warn/error） |
+| `agentDock.remoteAutoRefresh` | `true` | 自动轮询其他服务器文件/目录变化（编辑器与目录树实时更新） |
+| `agentDock.remoteWatchIntervalSeconds` | `3` | 远程文件/目录轮询间隔（秒） |
+| `agentDock.autoSave` | `off` | 其他服务器远程文件的自动保存策略，与原生 `files.autoSave` 一致：`off` / `afterDelay`（延迟 `agentDock.autoSaveDelay` 毫秒）/ `onFocusChange`（编辑器失焦）/ `onWindowChange`（窗口失焦） |
+| `agentDock.autoSaveDelay` | `1000` | `afterDelay` 模式下最后一次编辑后延迟多少毫秒自动保存 |
 
 ## License
 

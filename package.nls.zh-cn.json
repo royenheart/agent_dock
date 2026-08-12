@@ -48,8 +48,11 @@
   "cmd.remoteFsCopy": "复制",
   "cmd.remoteFsPaste": "粘贴",
   "cmd.remoteFsOpenTerminal": "在此处打开终端",
+  "cmd.remoteFsRemoveFromWorkspace": "从工作区移除目录",
   "config.remoteAutoRefresh.description": "自动轮询其他服务器上文件/目录的变化（已打开的编辑器与目录树实时更新）。",
   "config.remoteWatchIntervalSeconds.description": "轮询其他服务器文件/目录变化的间隔（秒）。",
   "config.sshTransport.description": "操作其他服务器的传输方式：\"persistent\" 每台服务器保持一条 SSH 长连接（文件操作走 SFTP、脚本走 exec 通道，低延迟，不再每次操作启动一个 ssh 进程）；\"spawn\" 每次操作一个 ssh 进程（旧行为）。",
-  "config.sshHostKeyMode.description": "持久 SSH 连接的主机密钥校验：\"yes\" 要求主机已记录在 ~/.ssh/known_hosts；\"accept-new\" 自动信任并记录未知主机；\"no\" 跳过校验（不推荐）。"
+  "config.sshHostKeyMode.description": "持久 SSH 连接的主机密钥校验：\"yes\" 要求主机已记录在 ~/.ssh/known_hosts；\"accept-new\" 自动信任并记录未知主机；\"no\" 跳过校验（不推荐）。",
+  "config.autoSave.description": "自动保存其他服务器上的远程文件（策略与原生 `files.autoSave` 一致，仅作用于 `agentdock-remote` 文件）：`off` 关闭；`afterDelay` 在最后一次编辑后延迟 `agentDock.autoSaveDelay` 毫秒保存；`onFocusChange` 编辑器失焦时保存（切换编辑器 / 聚焦终端 / 窗口失焦）；`onWindowChange` 窗口失焦时保存。",
+  "config.autoSaveDelay.description": "「afterDelay」模式下，最后一次编辑后延迟多少毫秒自动保存。"
 }

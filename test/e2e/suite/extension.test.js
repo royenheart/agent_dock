@@ -261,9 +261,13 @@ suite('agent-workspace e2e', () => {
     }
     assert.ok(cmdsFor('fsFile').has('agentDock.fsRename'), 'fsFile menu should contain rename');
     assert.ok(cmdsFor('fsFile').has('agentDock.fsDelete'), 'fsFile menu should contain delete');
-    // pin 目录（folder.remote / folder.workspace）保留「刷新目录」
+    // pin 目录（folder.remote / folder.workspace）保留「刷新目录」；远程固定目录可移出工作区（不删除真实目录）
     assert.ok(cmdsFor('folder.remote').has('agentDock.remoteFsRefreshDir'), 'folder.remote should keep refresh dir');
     assert.ok(cmdsFor('folder.workspace').has('agentDock.remoteFsRefreshDir'), 'folder.workspace should keep refresh dir');
+    assert.ok(
+      cmdsFor('folder.remote').has('agentDock.remoteFsRemoveFromWorkspace'),
+      'folder.remote should support removing the directory from the workspace',
+    );
   });
 
   test('context menus: getTreeItem contextValue matches declared viewItem (menu sync)', () => {

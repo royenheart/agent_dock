@@ -195,6 +195,24 @@
           "minimum": 1,
           "maximum": 60,
           "description": "%config.remoteWatchIntervalSeconds.description%"
+        },
+        "agentDock.autoSave": {
+          "type": "string",
+          "default": "off",
+          "enum": [
+            "off",
+            "afterDelay",
+            "onFocusChange",
+            "onWindowChange"
+          ],
+          "markdownDescription": "%config.autoSave.description%"
+        },
+        "agentDock.autoSaveDelay": {
+          "type": "number",
+          "default": 1000,
+          "minimum": 0,
+          "maximum": 60000,
+          "description": "%config.autoSaveDelay.description%"
         }
       }
     },
@@ -424,6 +442,12 @@
         "title": "%cmd.remoteFsOpenTerminal%",
         "category": "Agent Workspace",
         "icon": "$(terminal)"
+      },
+      {
+        "command": "agentDock.remoteFsRemoveFromWorkspace",
+        "title": "%cmd.remoteFsRemoveFromWorkspace%",
+        "category": "Agent Workspace",
+        "icon": "$(close)"
       }
     ],
     "menus": {
@@ -609,6 +633,11 @@
           "command": "agentDock.remoteFsOpenTerminal",
           "when": "view =~ /^agentDock.workspace/ && (viewItem == remoteFsDir || viewItem == folder.remote)",
           "group": "5_terminal@1"
+        },
+        {
+          "command": "agentDock.remoteFsRemoveFromWorkspace",
+          "when": "view =~ /^agentDock.workspace/ && viewItem == folder.remote",
+          "group": "3_modify@3"
         },
         {
           "command": "agentDock.remoteFsRefreshDir",

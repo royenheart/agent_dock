@@ -48,8 +48,11 @@
   "cmd.remoteFsCopy": "Copy",
   "cmd.remoteFsPaste": "Paste",
   "cmd.remoteFsOpenTerminal": "Open Terminal Here",
+  "cmd.remoteFsRemoveFromWorkspace": "Remove Directory from Workspace",
   "config.remoteAutoRefresh.description": "Automatically poll files/directories of other servers for changes (open editors and the tree update live).",
   "config.remoteWatchIntervalSeconds.description": "How often (in seconds) remote files/directories of other servers are polled for changes.",
   "config.sshTransport.description": "Transport for operations on other servers: \"persistent\" keeps one SSH connection per server (SFTP for file ops, exec channels for scripts — low latency, no per-operation ssh process); \"spawn\" runs one ssh process per operation (legacy, no persistent connection).",
-  "config.sshHostKeyMode.description": "Host key verification for persistent SSH connections: \"yes\" requires the host to be in ~/.ssh/known_hosts, \"accept-new\" automatically trusts and records unknown hosts, \"no\" skips verification (not recommended)."
+  "config.sshHostKeyMode.description": "Host key verification for persistent SSH connections: \"yes\" requires the host to be in ~/.ssh/known_hosts, \"accept-new\" automatically trusts and records unknown hosts, \"no\" skips verification (not recommended).",
+  "config.autoSave.description": "Auto-save remote files of other servers (same policies as native `files.autoSave`, applied only to `agentdock-remote` files): `off` disables; `afterDelay` saves `agentDock.autoSaveDelay` ms after the last edit; `onFocusChange` saves when the editor loses focus (switch editor / focus terminal / window blur); `onWindowChange` saves when the window loses focus.",
+  "config.autoSaveDelay.description": "Delay (ms) before auto-saving after the last edit when `agentDock.autoSave` is `afterDelay`."
 }

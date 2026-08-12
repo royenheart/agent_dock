@@ -13,6 +13,7 @@ import { setExtensionKind } from './ssh/currentExec';
 import { clientTerminalOptions, initClientTerminalPersistence, isAgentDockTerminal, isTrackedTerminal, markClientTerminalsShuttingDown, syncTrackedTerminalName, trackClientTerminal, untrackClientTerminal } from './ssh/clientTerminal';
 import { initNativeTerminalPersistence, markNativeTerminalsShuttingDown, reconcileNativeTerminal, syncNativeTerminalName, untrackNativeTerminal } from './ssh/nativeTerminal';
 import { initForwardStore, restoreActiveForwards } from './ssh/portForward';
+import { AutoSaveManager } from './autoSave';
 import { t } from './i18n';
 import { log } from './log';
 
@@ -129,6 +130,9 @@ export function activate(context: vscode.ExtensionContext): AgentDockApi {
   );
 
   registerCommands(context, provider);
+  // 其他服务器文件的自动保存（agentDock.autoSave，策略与 files.autoSave 一致）
+  const autoSave = new AutoSaveManager();
+  context.subscriptions.push(autoSave);
   void ensureCurrentServerRegistered();
   initClientTerminalPersistence(context.workspaceState);
   // fsOpenTerminal 的原生终端由 VSCode 自己恢复，这里只补记跟踪并回放被重置的名字
@@ -158,12 +162,17 @@ export function activate(context: vscode.ExtensionContext): AgentDockApi {
     { dispose: () => clearTimeout(fsTimer) },
     vscode.workspace.onDidChangeConfiguration((e) => {
       if (e.affectsConfiguration('agentDock')) {
-        provider.refresh();
+        // 配置变更只重绘树、保留缓存：folders/forwards/服务器列表由 getChildren
+        // 重新读取配置即可；只有影响扫描范围的参数变化才需要重扫会话缓存
+        if (e.affectsConfiguration('agentDock.sessionLimit')) {
+          provider.store.invalidate();
+        }
+        provider.refreshConfig();
       }
     }),
     vscode.workspace.onDidChangeWorkspaceFolders(() => {
       void ensureCurrentServerRegistered();
-      provider.refresh();
+      provider.refreshConfig();
     }),
   );
 

@@ -50,7 +50,7 @@ npm run test:unit    # 纯逻辑单测（node:test）：路径匹配、会话解
 npm run test:e2e     # @vscode/test-electron + xvfb：真实 VS Code 中验证树结构、文件命令、菜单完整性、transcript 等
 ```
 
-改动后至少跑 `npm run test:unit`（当前 128 项，全绿才算完成）。
+改动后至少跑 `npm run test:unit`（当前 145 项，全绿才算完成）。
 
 ## 演示 GIF 录制（README）
 
