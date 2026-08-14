@@ -1,3 +1,9 @@
+## v0.2.5 (2026-08-14)
+
+### Feat
+
+- View and modify the Git editor
+
 ## v0.2.4 (2026-08-14)
 
 ### Feat
