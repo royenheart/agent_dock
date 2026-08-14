@@ -1,3 +1,9 @@
+## v0.2.6 (2026-08-14)
+
+### Feat
+
+- file upload and download support
+
 ## v0.2.5 (2026-08-14)
 
 ### Feat
