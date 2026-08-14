@@ -1,39 +1,28 @@
 import * as vscode from "vscode";
-import type { GitStatusKind, RepoStatus } from "./types";
 import { getGitStatusEnable, getServers } from "../config";
 import { remoteGitStore } from "./remoteGit";
+import { gitHeadProvider } from "./gitHeadContent";
 import { remoteUri } from "../ssh/remoteFsProvider";
 import { pathBasename } from "../paths";
-import { t } from "../i18n";
-
-const LABEL: Record<GitStatusKind, string> = {
-  conflict: t("Conflict"),
-  deleted: t("Deleted"),
-  modified: t("Modified"),
-  added: t("Added"),
-  renamed: t("Renamed"),
-  copied: t("Copied"),
-  untracked: t("Untracked"),
-  ignored: t("Ignored"),
-};
-
-interface RemoteSource {
-  sc: vscode.SourceControl;
-  group: vscode.SourceControlResourceGroup;
-}
 
 /**
- * 把远端 git 仓库接入 VSCode 原生「源代码管理」视图（vscode.scm.createSourceControl）。
- * 每个已发现的远端仓库是一个独立 source control 分区，列出其变更文件；
- * 字母徽标 / 颜色复用 RemoteGitDecorationProvider（与树里的装饰一致）。
+ * ⚠️ 保留但不使用（unimplemented 预留）：不在 extension.ts 实例化。
+ *
+ * 这是"quickDiffProvider 路线"的载体：VS Code 编辑器的原生 gutter 改动标记 / 点击弹 peek /
+ * 行内 revert 只从挂在 SourceControl 上的 quickDiffProvider 取数（无独立注册 API）。
+ * 理论上 quickDiff 按 rootUri（scheme 敏感）匹配，agentdock-remote 与当前服务器的
+ * file/vscode-remote 互不交叉——但实测启用后当前连接服务器的原生 git 编辑器改动显示
+ * 仍被破坏，原因未查明（疑似 VS Code 版本间 quickDiff/SCM 行为差异），用户决定回退。
+ *
+ * 现行实现是 gitDirtyDiff.ts 的自绘 gutter（零接触原生 git）。本文件待后续排查清楚
+ * 或 VS Code 提供独立 quickDiff 注册 API 后再评估启用（见 README TODO）。
  */
 export class RemoteScmController {
-  private readonly sources = new Map<string, RemoteSource>();
+  private readonly sources = new Map<string, vscode.SourceControl>();
   private readonly unsubscribe: () => void;
 
   constructor() {
     this.unsubscribe = remoteGitStore.onChange(() => this.refresh());
-    // 首次激活后立刻同步一次（可能已有缓存）
     this.refresh();
   }
 
@@ -43,8 +32,8 @@ export class RemoteScmController {
   }
 
   private clearAll(): void {
-    for (const s of this.sources.values()) {
-      s.sc.dispose();
+    for (const sc of this.sources.values()) {
+      sc.dispose();
     }
     this.sources.clear();
   }
@@ -54,71 +43,30 @@ export class RemoteScmController {
       this.clearAll();
       return;
     }
-    const known = remoteGitStore.knownRoots();
     const seen = new Set<string>();
-    for (const { serverKey, root } of known) {
+    for (const { serverKey, root } of remoteGitStore.knownRoots()) {
       const id = serverKey + ":" + root;
       seen.add(id);
-      const status = remoteGitStore.statusForRepo(serverKey, root);
-      if (!status) {
-        continue; // 尚未扫描：扫描完成后 onChange 会再次触发 refresh
+      if (this.sources.has(id) || !remoteGitStore.statusForRepo(serverKey, root)) {
+        continue; // 已创建，或尚未扫描（扫描完成后 onChange 会再次触发 refresh）
       }
-      const source = this.ensureSource(serverKey, root);
-      this.populate(source, serverKey, status);
+      const server = getServers().find((s) => s.name === serverKey);
+      const repoName = pathBasename(root);
+      // SCM 视图不支持分组：用 [服务器] 前缀让多个服务器的仓库一眼可辨
+      const label = server ? "[" + server.name + "] " + repoName : repoName;
+      const sc = vscode.scm.createSourceControl("agentdock.git:" + id, label, remoteUri(serverKey, root));
+      // 远端 commit 等操作预留（unimplemented）：隐藏提交输入框，不建任何资源分组
+      sc.inputBox.visible = false;
+      sc.quickDiffProvider = gitHeadProvider;
+      this.sources.set(id, sc);
     }
     // 清理已消失（服务器被移除 / 目录不再被浏览）的 source control
-    for (const [id, s] of this.sources) {
+    for (const [id, sc] of this.sources) {
       if (!seen.has(id)) {
-        s.sc.dispose();
+        sc.dispose();
         this.sources.delete(id);
       }
     }
-  }
-
-  private ensureSource(serverKey: string, root: string): RemoteSource {
-    const id = serverKey + ":" + root;
-    const existing = this.sources.get(id);
-    if (existing) {
-      return existing;
-    }
-    const server = getServers().find((s) => s.name === serverKey);
-    const repoName = pathBasename(root);
-    const label = server ? repoName + " (" + server.name + ")" : repoName;
-    const sc = vscode.scm.createSourceControl("agentdock.git:" + id, label, remoteUri(serverKey, root));
-    // v1 只读展示：隐藏提交输入框（远端 commit 尚未实现）
-    sc.inputBox.visible = false;
-    const group = sc.createResourceGroup("changes", t("Changes"));
-    group.hideWhenEmpty = true;
-    group.resourceStates = [];
-    const source: RemoteSource = { sc, group };
-    this.sources.set(id, source);
-    return source;
-  }
-
-  private populate(source: RemoteSource, serverKey: string, status: RepoStatus): void {
-    const states: vscode.SourceControlResourceState[] = [];
-    const sorted = [...status.files.values()].sort((a, b) => a.path.localeCompare(b.path));
-    for (const f of sorted) {
-      if (f.kind === "ignored") {
-        continue; // 忽略项不进入「源代码管理」变更列表（与原生 git 一致）
-      }
-      const uri = remoteUri(serverKey, f.path);
-      const state: vscode.SourceControlResourceState = {
-        resourceUri: uri,
-        command:
-          f.kind === "deleted"
-            ? undefined
-            : { command: "vscode.open", title: t("Open File"), arguments: [uri] },
-        decorations: {
-          strikeThrough: f.kind === "deleted",
-          tooltip: LABEL[f.kind] + (f.originalPath ? " ← " + f.originalPath : ""),
-        },
-        contextValue: "agentdock.git.resource",
-      };
-      states.push(state);
-    }
-    source.group.resourceStates = states;
-    source.sc.count = states.length;
   }
 }
 

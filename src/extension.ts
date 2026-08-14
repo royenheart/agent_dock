@@ -16,7 +16,8 @@ import { initNativeTerminalPersistence, markNativeTerminalsShuttingDown, reconci
 import { initForwardStore, restoreActiveForwards } from './ssh/portForward';
 import { AutoSaveManager } from './autoSave';
 import { RemoteGitDecorationProvider } from './git/gitDecorations';
-import { createRemoteScmController } from './git/remoteScm';
+import { GitDirtyDiffCodeLensProvider, GitDirtyDiffDecorator } from './git/gitDirtyDiff';
+import { GIT_HEAD_SCHEME, gitHeadProvider } from './git/gitHeadContent';
 import { remoteGitStore } from './git/remoteGit';
 import { t } from './i18n';
 import { log } from './log';
@@ -52,9 +53,10 @@ export function activate(context: vscode.ExtensionContext): AgentDockApi {
   });
   const decorations = new SessionDecorationProvider(provider.store);
   provider.onDidChangeTreeData(() => decorations.refresh());
-  // 其他服务器文件的 git 状态装饰（树 + 源代码管理视图共用）
+  // 其他服务器文件的 git 状态装饰（树）+ 编辑器 gutter 改动标记（自绘，见 git/gitDirtyDiff.ts；
+  // quickDiff 载体 remoteScm.ts 保留但不启用——实测影响原生 git，原因待查）
   const gitDecorations = new RemoteGitDecorationProvider();
-  const remoteScm = createRemoteScmController();
+  const gitDirtyDiff = new GitDirtyDiffDecorator();
   const settings = new SettingsViewProvider(context.extensionUri);
   const syncSelection = (e: vscode.TreeViewSelectionChangeEvent<Node>): void => {
     [provider.selectedNode] = e.selection;
@@ -102,8 +104,11 @@ export function activate(context: vscode.ExtensionContext): AgentDockApi {
     vscode.window.registerFileDecorationProvider(decorations),
     vscode.window.registerFileDecorationProvider(gitDecorations),
     { dispose: () => gitDecorations.dispose() },
-    { dispose: () => remoteScm.dispose() },
+    gitDirtyDiff,
+    vscode.languages.registerCodeLensProvider({ scheme: REMOTE_SCHEME }, new GitDirtyDiffCodeLensProvider()),
     { dispose: () => remoteGitStore.dispose() },
+    vscode.workspace.registerTextDocumentContentProvider(GIT_HEAD_SCHEME, gitHeadProvider),
+    { dispose: () => gitHeadProvider.dispose() },
     vscode.workspace.registerFileSystemProvider(REMOTE_SCHEME, remoteFsProvider, {
       isCaseSensitive: true,
       // 其他服务器文件可写（writeFile/createDirectory/delete/rename 走 SFTP）；

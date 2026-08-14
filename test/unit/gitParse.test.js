@@ -95,3 +95,29 @@ test("parentPosix / isWithin edge cases", () => {
   assert.equal(isWithin("/ab", "/a"), false);
   assert.equal(isWithin("/a", "/"), true);
 });
+
+test("parseUnifiedZeroHunks: modified / added / deleted / multi-hunk（含改动内容行）", () => {
+  const { parseUnifiedZeroHunks } = require("../../out/git/parse");
+  // modified：旧 1 行变新 2 行；文件头与上下文行不进 lines
+  assert.deepEqual(parseUnifiedZeroHunks("diff --git a/a b/a\n@@ -1 +1,2 @@\n-one\n+ONE\n+two\n"), [
+    { kind: "modified", startLine: 0, lineCount: 2, lines: ["-one", "+ONE", "+two"] },
+  ]);
+  // added：旧 0 行（-1,0）新增 2 行（+2,2）
+  assert.deepEqual(parseUnifiedZeroHunks("@@ -1,0 +2,2 @@\n+y\n+z\n"), [
+    { kind: "added", startLine: 1, lineCount: 2, lines: ["+y", "+z"] },
+  ]);
+  // deleted：新文件 0 行（+1,0），标记附着在新文件第 1 行（0-based 0）
+  assert.deepEqual(parseUnifiedZeroHunks("@@ -2 +1,0 @@\n-l2\n"), [
+    { kind: "deleted", startLine: 0, lineCount: 0, lines: ["-l2"] },
+  ]);
+  // 文件开头删除（+0,0）→ 附着到第 0 行
+  assert.deepEqual(parseUnifiedZeroHunks("@@ -1 +0,0 @@\n-first\n"), [
+    { kind: "deleted", startLine: 0, lineCount: 0, lines: ["-first"] },
+  ]);
+  // 多 hunk + 单行省略 count
+  assert.deepEqual(parseUnifiedZeroHunks("@@ -5 +5 @@\n-a\n+b\n@@ -10,2 +11,3 @@\n-x\n-y\n+p\n+q\n+r\n"), [
+    { kind: "modified", startLine: 4, lineCount: 1, lines: ["-a", "+b"] },
+    { kind: "modified", startLine: 10, lineCount: 3, lines: ["-x", "-y", "+p", "+q", "+r"] },
+  ]);
+  assert.deepEqual(parseUnifiedZeroHunks(""), []);
+});

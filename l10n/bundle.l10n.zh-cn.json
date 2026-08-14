@@ -155,6 +155,8 @@
   "Failed to start client process: {0}": "无法启动客户端进程: {0}",
   "Changes": "更改",
   "Open File": "打开文件",
+  "Open Changes": "打开更改",
+  "Working Tree": "工作区",
   "Modified": "已修改",
   "Added": "新增",
   "Deleted": "已删除",

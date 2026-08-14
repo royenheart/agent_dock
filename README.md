@@ -70,6 +70,11 @@
 | `agentDock.autoSave` | `off` | 其他服务器远程文件的自动保存策略，与原生 `files.autoSave` 一致：`off` / `afterDelay`（延迟 `agentDock.autoSaveDelay` 毫秒）/ `onFocusChange`（编辑器失焦）/ `onWindowChange`（窗口失焦） |
 | `agentDock.autoSaveDelay` | `1000` | `afterDelay` 模式下最后一次编辑后延迟多少毫秒自动保存 |
 
+## TODO
+
+- **远程仓库编辑器 gutter 改回 quickDiffProvider 路线**（`src/git/remoteScm.ts`，代码保留未启用）：原生 gutter 点击弹 peek、行内 revert、编辑时实时更新都只从挂在 SourceControl 上的 quickDiffProvider 取数。理论上 quickDiff 按 rootUri（scheme 敏感）隔离、不影响原生 git，但实测启用后当前连接服务器的原生 git 编辑器改动显示仍被破坏，原因待查（疑似 VS Code 版本间 quickDiff/SCM 行为差异）。待排查清楚、或 VS Code 提供独立 quickDiff 注册 API 后启用，替换 `src/git/gitDirtyDiff.ts` 的自绘 gutter
+- 远程仓库的 commit / stage 等写操作（SCM 输入框）——unimplemented 预留
+
 ## License
 
 MIT

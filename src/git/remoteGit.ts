@@ -142,6 +142,21 @@ export class RemoteGitStore {
     return this.status.get(key(serverKey, root));
   }
 
+  /** 路径所属仓库根（已知根里最长前缀匹配）；未知返回 undefined。 */
+  repoRootFor(serverKey: string, path: string): string | undefined {
+    const roots = this.rootsByServer.get(serverKey);
+    if (!roots || roots.size === 0) {
+      return undefined;
+    }
+    let bestRoot: string | undefined;
+    for (const root of roots) {
+      if (isWithin(path, root) && (bestRoot === undefined || root.length > bestRoot.length)) {
+        bestRoot = root;
+      }
+    }
+    return bestRoot;
+  }
+
   /** 已知的仓库根（serverKey → roots），供「源代码管理」联动枚举仓库。 */
   knownRoots(): Array<{ serverKey: string; root: string }> {
     const out: Array<{ serverKey: string; root: string }> = [];

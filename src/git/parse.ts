@@ -121,6 +121,47 @@ export function parsePorcelainZ(output: string, limit: number): PorcelainResult 
   return { files, truncated };
 }
 
+/** git diff --unified=0 的单个 hunk（行号均 0-based，相对新文件/工作区）。 */
+export interface DirtyHunk {
+  kind: "modified" | "added" | "deleted";
+  /** 起始行；deleted 为删除点附着行（gap 之后的第一行，开头删除时为 0）。 */
+  startLine: number;
+  /** 覆盖行数；deleted 恒为 0（行已不存在，只打边界标记）。 */
+  lineCount: number;
+  /** 该 hunk 的 +/- 内容行（悬停展示具体改动用）。 */
+  lines: string[];
+}
+
+const HUNK_HEADER = /^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@/;
+
+/** 解析 git diff --unified=0 输出：hunk 头定位置，其后的 +/- 行收为该 hunk 的具体改动内容。 */
+export function parseUnifiedZeroHunks(text: string): DirtyHunk[] {
+  const hunks: DirtyHunk[] = [];
+  let current: DirtyHunk | undefined;
+  for (const line of text.split("\n")) {
+    const m = HUNK_HEADER.exec(line);
+    if (m) {
+      const oldCount = m[2] === undefined ? 1 : Number(m[2]);
+      const newStart = Number(m[3]);
+      const newCount = m[4] === undefined ? 1 : Number(m[4]);
+      if (newCount === 0) {
+        current = { kind: "deleted", startLine: Math.max(0, newStart - 1), lineCount: 0, lines: [] };
+      } else if (oldCount === 0) {
+        current = { kind: "added", startLine: newStart - 1, lineCount: newCount, lines: [] };
+      } else {
+        current = { kind: "modified", startLine: newStart - 1, lineCount: newCount, lines: [] };
+      }
+      hunks.push(current);
+      continue;
+    }
+    // -U0 下 hunk 内的内容行只有 +/- 两类；diff --git 等文件头出现在首个 hunk 前，天然跳过
+    if (current && (line.startsWith("+") || line.startsWith("-"))) {
+      current.lines.push(line);
+    }
+  }
+  return hunks;
+}
+
 /** 由变更文件列表构建仓库快照（含目录聚合滚标）。 */
 export function buildRepoStatus(
   root: string,

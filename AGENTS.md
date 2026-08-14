@@ -9,6 +9,12 @@
 - 提交前自查：`grep -rniE '你的服务器地址|用户名|私钥' test/ src/ docs/` 之类的敏感词扫描；拿不准就先问
 - 若发现历史中有私密信息：用 git-filter-repo 重写历史（`--invert-paths` / `--replace-text`）+ 强制推送 + **立即轮换相关凭据**（公网可见过的私钥视同已泄露），并同步清理 GitHub 侧缓存/请求支持删除
 
+## 发版流程（commitizen，违反即卡死发版）
+
+- 固定流程：写好功能 → 提交**一次**功能 commit → 由维护者手动跑 `cz bump --increment …` 生成 bump commit + tag，然后 `git push --follow-tags`
+- **禁止在功能 commit 里预写未发版的 CHANGELOG 段落或手改版本号**——a61dec3 把提前生成的 `## v0.2.4` 段提交进 CHANGELOG.md，cz 增量 changelog 拿顶部版本去模糊匹配 git tag（相似度阈值 0.89）匹配不到，报 "No tag found to do an incremental changelog"，发版直接卡死
+- `package.json` 的 `version`、`.cz.toml` 的 `version`、CHANGELOG.md 顶部版本段落，只允许 `cz bump` 一处产出；手动改任何一处都属回退
+
 ## 打包（改 .vscodeignore / package.json / scripts/ 必读）
 
 - 绝不把 `node_modules/**` 加回 `.vscodeignore`——vsix 必须带 node-pty 预编译二进制，否则客户端终端失去真 pty，Ctrl+C 失效（0.1.9/0.1.10 因此回退）
@@ -63,9 +69,16 @@
 - **当前服务器的 server 节点 key 必须恒为 `CURRENT_SERVER_KEY`**（rootNodes 里即使有匹配配置也统一用它）——folder/otherSessions/portsRoot 的 serverKey 都是它，nodeParent 推导的父 server id 才能与树中实际节点一致；改回 `current.name` 会导致当前服务器目录展开状态无法恢复
 - 展开状态异常时看 `[tree]` 日志：`getParent <kind> id=... -> parent id=...`（debug）与 `reveal <id> failed`——核对 id 是否跨 reload 一致
 
-## 端口转发（src/ssh/portForward.ts）
+## 远程 git 集成（只读展示，自绘 gutter）
 
-- Windows（Win32-OpenSSH）不支持 ControlMaster，`-O forward`/`-O cancel` 必然失败——win32 直接走独立 `ssh -N` 进程，不要尝试 `-O`，否则每次启动都打失败日志
+- **现行实现是 gitDirtyDiff.ts 的自绘 gutter**（TextEditorDecorationType + SVG data URI 图标，数据走 `git diff HEAD -U0`，解析器 parseUnifiedZeroHunks 在 parse.ts 有单测）——零接触原生 git；当前连接服务器的 git 完全交给原生 git 扩展，不要碰
+- **quickDiff 载体 remoteScm.ts 保留但禁止在 extension.ts 实例化**：理论上 quickDiff 按 rootUri（scheme 敏感）隔离，但实测启用后当前服务器的原生 git 编辑器改动显示仍被破坏，原因待查（README TODO 有记录）
+- 性能三板斧（删掉任何一条 = 首开延迟回退）：hunk 结果走模块级共享缓存（`cachedDirtyHunks`/`warmDirtyHunks`，store onChange 整体失效）、首开编辑器仓库根未知时 fetchDirtyHunks 踢 `remoteGitStore.request()` 管线、编辑器事件 50ms 短去抖
+- 点击查看改动走 **CodeLens**（每个改动块上方「打开更改」→ `agentDock.openGitDiff` → vscode.diff，左侧 HEAD 走 gitHeadContent.ts 的 `agentdock-git-head` scheme）——gutter 图标无公开点击事件 API，不要退回悬停方案（用户明确要求点击）；CodeLens 与装饰器共享同一份 hunk 缓存
+- untracked/added/deleted/ignored 不打 gutter（与原生 git 语义一致）；编辑后标记要等保存→轮询→重扫刷新，不做逐键 diff（每键一次 ssh 不可接受）
+- 树/资源管理器的字母徽标装饰走 gitDecorations.ts，与 gutter 并存
+
+## 端口转发（src/ssh/portForward.ts）- Windows（Win32-OpenSSH）不支持 ControlMaster，`-O forward`/`-O cancel` 必然失败——win32 直接走独立 `ssh -N` 进程，不要尝试 `-O`，否则每次启动都打失败日志
 - 活跃转发必须持久化到 workspaceState（`persistActiveForwards` 在 start/stop/进程退出时调用），reload 后由 `restoreActiveForwards` 自动重启——否则转发随窗口关闭
 
 ## 右键菜单（package.json + getTreeItem 必须同步）
