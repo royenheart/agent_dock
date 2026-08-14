@@ -1,10 +1,8 @@
-## v0.2.4 (2026-08-12)
+## v0.2.4 (2026-08-14)
 
 ### Feat
 
-- move local/remote files to another directory (right-click "Move to…", path browser to pick the destination, overwrite confirmation)
-- drag & drop in the Agent Workspace tree: remote↔remote (same server) and local↔local move, remote↔local copy (SFTP streaming, directory recursion)
-- git status for other-server files/dirs in Agent Workspace (modified / added / deleted / untracked / conflict, native git theme colors), plus a read-only Source Control section per remote repo (no commit yet)
+- add git track for other servers connected
 
 ## v0.2.3 (2026-08-12)
 
