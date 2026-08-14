@@ -11,6 +11,7 @@ module.exports = {
     textDocuments: [],
   },
   env: { language: 'en', remoteName: undefined, machineId: 'unit-test' },
+  CancellationError: class CancellationError extends Error {},
   window: {
     createOutputChannel: () => ({ appendLine() {}, append() {}, show() {}, dispose() {} }),
     showErrorMessage() {},

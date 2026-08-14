@@ -20,7 +20,7 @@ import { joinRemotePath } from '../ssh/remoteFsParse';
 import { remoteUri } from '../ssh/remoteFsProvider';
 import { sessionFor } from '../ssh/sshSession';
 import { pickDirectory, type SubdirsResult } from '../views/dirPicker';
-import { uriFsPath } from '../paths';
+import { uriFsPath, pathBasename } from '../paths';
 import { t } from '../i18n';
 import { log } from '../log';
 
@@ -251,6 +251,61 @@ export async function localMove(uri: vscode.Uri, name: string, srcIsDir: boolean
 
 /* ---------- 跨端复制（远程 ↔ 本地，SFTP 流式传输，目录递归） ---------- */
 
+/** 流式复制的进度/取消上下文（可选；不提供则无进度上报、不可取消）。 */
+export interface CopyCtx {
+  progress?: vscode.Progress<{ message?: string; increment?: number }>;
+  token?: vscode.CancellationToken;
+}
+
+interface PumpOptions {
+  /** 总字节数（>0 时按字节上报 increment 百分比）。 */
+  size?: number;
+  progress?: vscode.Progress<{ message?: string; increment?: number }>;
+  token?: vscode.CancellationToken;
+  /** 失败/取消时的收尾（如下载删除半成品文件）。 */
+  cleanup?: () => void;
+}
+
+/**
+ * 流式泵：rs.pipe(ws) 传输，按字节上报进度，支持取消；任一侧出错即双侧销毁并 reject。
+ * 0.2.4/0.2.5 曾因漏掉 pipe 导致下载/上传只建空文件——这是本函数存在的意义（并有单测锁死）。
+ */
+export function pumpStreams(rs: NodeJS.ReadableStream, ws: NodeJS.WritableStream, opts: PumpOptions = {}): Promise<void> {
+  return new Promise<void>((resolve, reject) => {
+    let settled = false;
+    const fail = (err: unknown): void => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      (rs as { destroy?: () => void }).destroy?.();
+      (ws as { destroy?: () => void }).destroy?.();
+      opts.cleanup?.();
+      reject(err);
+    };
+    const done = (): void => {
+      if (!settled) {
+        settled = true;
+        resolve();
+      }
+    };
+    rs.on('error', fail);
+    ws.on('error', fail);
+    // ssh2 的 SFTP 写流 'finish' 不可靠（fastWrite），finish/close 先到先结算
+    ws.on('finish', done);
+    ws.on('close', done);
+    if (opts.size && opts.size > 0 && opts.progress) {
+      const total = opts.size;
+      const progress = opts.progress;
+      rs.on('data', (chunk: Buffer) => {
+        progress.report({ increment: (chunk.length / total) * 100 });
+      });
+    }
+    opts.token?.onCancellationRequested(() => fail(new vscode.CancellationError()));
+    rs.pipe(ws);
+  });
+}
+
 type FsRef = { kind: 'local'; uri: vscode.Uri } | { kind: 'remote'; serverKey: string; path: string };
 
 function serverFor(serverKey: string): ServerConfig | undefined {
@@ -281,76 +336,37 @@ async function fsEnsureDir(ref: FsRef): Promise<void> {
   }
 }
 
-async function sftpDownload(server: ServerConfig, remotePath: string, localDest: string): Promise<void> {
+async function sftpDownload(server: ServerConfig, remotePath: string, localDest: string, ctx?: CopyCtx): Promise<void> {
   const sftp = await sessionFor(server, { hostKeyMode: getSshHostKeyMode() }).sftp();
-  await new Promise<void>((resolve, reject) => {
-    const rs = sftp.createReadStream(remotePath);
-    const ws = createWriteStream(localDest);
-    let settled = false;
-    const fail = (err: unknown): void => {
-      if (settled) {
-        return;
-      }
-      settled = true;
-      try {
-        rs.destroy();
-      } catch {
-        // ignore
-      }
-      try {
-        ws.destroy();
-      } catch {
-        // ignore
-      }
+  const size = await new Promise<number>((res) => sftp.stat(remotePath, (err, st) => res(err ? 0 : st.size)));
+  const rs = sftp.createReadStream(remotePath);
+  const ws = createWriteStream(localDest);
+  await pumpStreams(rs, ws, {
+    size,
+    progress: ctx?.progress,
+    token: ctx?.token,
+    cleanup: () => {
       void fsp.rm(localDest, { force: true }).catch(() => {});
-      reject(err);
-    };
-    rs.on('error', fail);
-    ws.on('error', fail);
-    ws.on('finish', () => {
-      if (!settled) {
-        settled = true;
-        resolve();
-      }
-    });
+    },
   });
 }
 
-async function sftpUpload(server: ServerConfig, localSrc: string, remoteDest: string): Promise<void> {
+async function sftpUpload(server: ServerConfig, localSrc: string, remoteDest: string, ctx?: CopyCtx): Promise<void> {
   const sftp = await sessionFor(server, { hostKeyMode: getSshHostKeyMode() }).sftp();
-  await new Promise<void>((resolve, reject) => {
-    const rs = createReadStream(localSrc);
-    const ws = sftp.createWriteStream(remoteDest);
-    let settled = false;
-    const fail = (err: unknown): void => {
-      if (settled) {
-        return;
-      }
-      settled = true;
-      try {
-        rs.destroy();
-      } catch {
-        // ignore
-      }
-      try {
-        ws.destroy();
-      } catch {
-        // ignore
-      }
-      reject(err);
-    };
-    rs.on('error', fail);
-    ws.on('error', fail);
-    ws.on('close', () => {
-      if (!settled) {
-        settled = true;
-        resolve();
-      }
-    });
+  const size = await fsp.stat(localSrc).then((st) => st.size).catch(() => 0);
+  const rs = createReadStream(localSrc);
+  const ws = sftp.createWriteStream(remoteDest);
+  await pumpStreams(rs, ws, {
+    size,
+    progress: ctx?.progress,
+    token: ctx?.token,
+    cleanup: () => {
+      sftp.unlink(remoteDest, () => {});
+    },
   });
 }
 
-async function fsCopyFile(src: FsRef, dest: FsRef): Promise<void> {
+async function fsCopyFile(src: FsRef, dest: FsRef, ctx?: CopyCtx): Promise<void> {
   if (src.kind === 'local' && dest.kind === 'local') {
     await fsp.copyFile(uriFsPath(src.uri), uriFsPath(dest.uri));
     return;
@@ -360,7 +376,7 @@ async function fsCopyFile(src: FsRef, dest: FsRef): Promise<void> {
     if (!server) {
       throw new Error(t('Server {0} not found in config', src.serverKey));
     }
-    await sftpDownload(server, src.path, uriFsPath(dest.uri));
+    await sftpDownload(server, src.path, uriFsPath(dest.uri), ctx);
     return;
   }
   if (src.kind === 'local' && dest.kind === 'remote') {
@@ -368,23 +384,90 @@ async function fsCopyFile(src: FsRef, dest: FsRef): Promise<void> {
     if (!server) {
       throw new Error(t('Server {0} not found in config', dest.serverKey));
     }
-    await sftpUpload(server, uriFsPath(src.uri), dest.path);
+    await sftpUpload(server, uriFsPath(src.uri), dest.path, ctx);
     return;
   }
   throw new Error('unsupported copy direction');
 }
 
-async function copyRecursive(src: FsRef, dest: FsRef): Promise<void> {
+async function copyRecursive(src: FsRef, dest: FsRef, ctx?: CopyCtx): Promise<void> {
+  if (ctx?.token?.isCancellationRequested) {
+    throw new vscode.CancellationError();
+  }
   const st = await vscode.workspace.fs.stat(refUri(src));
   if ((st.type & vscode.FileType.Directory) !== 0) {
     await fsEnsureDir(dest);
     const entries = await fsList(src);
     for (const [name] of entries) {
-      await copyRecursive(joinRef(src, name), joinRef(dest, name));
+      await copyRecursive(joinRef(src, name), joinRef(dest, name), ctx);
     }
     return;
   }
-  await fsCopyFile(src, dest);
+  ctx?.progress?.report({ message: pathBasename(refUri(src).path) });
+  await fsCopyFile(src, dest, ctx);
+}
+
+/** 全走 workspace.fs 的递归复制：两端可以是任意已注册 scheme（file / vscode-remote / agentdock-remote）。 */
+export async function copyUriRecursive(src: vscode.Uri, dest: vscode.Uri, ctx?: CopyCtx): Promise<void> {
+  if (ctx?.token?.isCancellationRequested) {
+    throw new vscode.CancellationError();
+  }
+  const st = await vscode.workspace.fs.stat(src);
+  if ((st.type & vscode.FileType.Directory) !== 0) {
+    try {
+      await vscode.workspace.fs.createDirectory(dest);
+    } catch {
+      // 目标目录已存在
+    }
+    for (const [name] of await vscode.workspace.fs.readDirectory(src)) {
+      await copyUriRecursive(vscode.Uri.joinPath(src, name), vscode.Uri.joinPath(dest, name), ctx);
+    }
+    return;
+  }
+  ctx?.progress?.report({ message: pathBasename(src.path) });
+  await vscode.workspace.fs.writeFile(dest, await vscode.workspace.fs.readFile(src));
+}
+
+/** 当前服务器（或任意 workspace.fs 可达的 URI）复制到客户端磁盘（下载；保留原件）。 */
+export async function copyCurrentToLocal(srcUri: vscode.Uri, name: string, destDir: vscode.Uri): Promise<MoveResult> {
+  const destUri = vscode.Uri.joinPath(destDir, name);
+  const overwrite = await confirmLocalOverwrite(destUri, name);
+  if (overwrite !== 'ok') {
+    return overwrite;
+  }
+  return runCopyWithProgress(t('Downloading {0}', name), name, (ctx) => copyUriRecursive(srcUri, destUri, ctx));
+}
+
+/** 远程文件下载到客户端指定文件路径（覆盖确认由保存对话框完成，这里不再重复询问）。 */
+export async function downloadRemoteToUri(serverKey: string, srcPath: string, dest: vscode.Uri): Promise<MoveResult> {
+  const server = serverFor(serverKey);
+  if (!server) {
+    vscode.window.showErrorMessage(t('Server {0} not found in config', serverKey));
+    return 'error';
+  }
+  const name = pathBasename(srcPath);
+  return runCopyWithProgress(t('Downloading {0}', name), name, (ctx) =>
+    copyRecursive({ kind: 'remote', serverKey, path: srcPath }, { kind: 'local', uri: dest }, ctx),
+  );
+}
+
+/** 带进度的跨端复制执行器：右下角通知（字节级进度 + 可取消），取消映射为 'cancel'。 */
+async function runCopyWithProgress(title: string, name: string, op: (ctx: CopyCtx) => Promise<void>): Promise<MoveResult> {
+  try {
+    await vscode.window.withProgress(
+      { location: vscode.ProgressLocation.Notification, title, cancellable: true },
+      (progress, token) => op({ progress, token }),
+    );
+  } catch (err) {
+    if (err instanceof vscode.CancellationError) {
+      vscode.window.setStatusBarMessage(t('Cancelled'), 3000);
+      return 'cancel';
+    }
+    vscode.window.showErrorMessage(t('Failed to copy {0}: {1}', name, String(err)));
+    return 'error';
+  }
+  vscode.window.setStatusBarMessage(t('Copied {0}', name), 3000);
+  return 'ok';
 }
 
 /** 远程文件/目录复制到本地（下载；保留远端原件）。 */
@@ -404,14 +487,9 @@ export async function copyRemoteToLocal(
   if (overwrite !== 'ok') {
     return overwrite;
   }
-  try {
-    await copyRecursive({ kind: 'remote', serverKey, path: srcPath }, { kind: 'local', uri: destUri });
-  } catch (err) {
-    vscode.window.showErrorMessage(t('Failed to copy {0}: {1}', name, String(err)));
-    return 'error';
-  }
-  vscode.window.setStatusBarMessage(t('Copied {0}', name), 3000);
-  return 'ok';
+  return runCopyWithProgress(t('Downloading {0}', name), name, (ctx) =>
+    copyRecursive({ kind: 'remote', serverKey, path: srcPath }, { kind: 'local', uri: destUri }, ctx),
+  );
 }
 
 /** 本地文件/目录复制到远程目录（上传；保留本地原件）。 */
@@ -431,12 +509,7 @@ export async function copyLocalToRemote(
   if (overwrite !== 'ok') {
     return overwrite;
   }
-  try {
-    await copyRecursive({ kind: 'local', uri: srcUri }, { kind: 'remote', serverKey, path: destPath });
-  } catch (err) {
-    vscode.window.showErrorMessage(t('Failed to copy {0}: {1}', name, String(err)));
-    return 'error';
-  }
-  vscode.window.setStatusBarMessage(t('Copied {0}', name), 3000);
-  return 'ok';
+  return runCopyWithProgress(t('Uploading {0}', name), name, (ctx) =>
+    copyRecursive({ kind: 'local', uri: srcUri }, { kind: 'remote', serverKey, path: destPath }, ctx),
+  );
 }

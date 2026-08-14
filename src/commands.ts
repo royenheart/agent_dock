@@ -26,7 +26,7 @@ import { forwardSpec, setOnDidChange, startForward, stopForward } from './ssh/po
 import { readSshConfigHosts, type SshHostEntry } from './ssh/sshConfig';
 import { normPath, pathBasename, uriFsPath } from './paths';
 import { pickDirectory } from './views/dirPicker';
-import { localListSubdirs, localMove, pickLocalMoveTarget, pickRemoteMoveTarget, remoteListSubdirs, remoteMove, remoteParentPath } from './tree/moveOps';
+import { copyCurrentToLocal, copyLocalToRemote, copyRemoteToLocal, copyUriRecursive, downloadRemoteToUri, localListSubdirs, localMove, pickLocalMoveTarget, pickRemoteMoveTarget, remoteListSubdirs, remoteMove, remoteParentPath } from './tree/moveOps';
 import { SessionPanel, type SessionTarget } from './views/sessionPanel';
 import type { Node, WorkspaceProvider } from './tree/workspaceProvider';
 import { CURRENT_SERVER_KEY } from './tree/workspaceProvider';
@@ -543,6 +543,79 @@ export function registerCommands(context: vscode.ExtensionContext, provider: Wor
     }
   });
 
+  /** 下载当前服务器文件/目录到客户端磁盘（扩展跑在客户端，workspace.fs 直写本地）。 */
+  reg('agentDock.fsDownload', async (node: FsEntryNode) => {
+    if (node?.kind !== 'fsEntry') {
+      return;
+    }
+    if (node.isDir) {
+      const picked = await vscode.window.showOpenDialog({
+        canSelectFolders: true,
+        canSelectFiles: false,
+        canSelectMany: false,
+        openLabel: t('Download'),
+        title: t('Download {0} to…', node.name),
+      });
+      const dir = picked?.[0];
+      if (dir) {
+        await copyCurrentToLocal(node.uri, node.name, dir);
+      }
+      return;
+    }
+    const dest = await vscode.window.showSaveDialog({ defaultUri: vscode.Uri.file(node.name), saveLabel: t('Download') });
+    if (!dest) {
+      return;
+    }
+    try {
+      await vscode.window.withProgress(
+        { location: vscode.ProgressLocation.Notification, title: t('Downloading {0}', node.name), cancellable: false },
+        async () => {
+          await vscode.workspace.fs.writeFile(dest, await vscode.workspace.fs.readFile(node.uri));
+        },
+      );
+      vscode.window.setStatusBarMessage(t('Downloaded {0}', node.name), 3000);
+    } catch (err) {
+      vscode.window.showErrorMessage(t('Failed to download {0}: {1}', node.name, String(err)));
+    }
+  });
+
+  /** 从客户端选择文件/文件夹上传到当前服务器目录（拖放之外的保底路径）。 */
+  reg('agentDock.fsUpload', async (node: FsEntryNode | FolderNode) => {
+    const dir = targetDirUri(node);
+    if (!dir) {
+      return;
+    }
+    const picked = await vscode.window.showOpenDialog({
+      canSelectFiles: true,
+      canSelectFolders: true,
+      canSelectMany: true,
+      openLabel: t('Upload'),
+      title: t('Upload to {0}', node?.kind === 'fsEntry' ? node.name : node?.kind === 'folder' ? node.label : ''),
+    });
+    if (!picked || picked.length === 0) {
+      return;
+    }
+    for (const src of picked) {
+      const name = pathBasename(src.path);
+      const dest = vscode.Uri.joinPath(dir, name);
+      try {
+        await vscode.workspace.fs.stat(dest);
+        const ok = await vscode.window.showWarningMessage(t('{0} already exists. Overwrite?', name), { modal: true }, t('Overwrite'));
+        if (!ok) {
+          continue;
+        }
+      } catch {
+        // 目标不存在：正常上传
+      }
+      try {
+        await copyUriRecursive(src, dest);
+      } catch (err) {
+        vscode.window.showErrorMessage(t('Failed to copy {0}: {1}', name, String(err)));
+      }
+    }
+    provider.refreshFs();
+  });
+
   reg('agentDock.fsNewFile', async (node: FsEntryNode | FolderNode, name?: string) => {
     const dir = targetDirUri(node);
     if (!dir) {
@@ -1039,6 +1112,53 @@ export function registerCommands(context: vscode.ExtensionContext, provider: Wor
     if (done) {
       vscode.window.setStatusBarMessage(t('Pasted {0}', copyClipboard.name), 3000);
     }
+  });
+
+  /** 下载其他服务器文件/目录到客户端磁盘（SFTP 读 → 客户端写）。 */
+  reg('agentDock.remoteFsDownload', async (node: RemoteFsEntryNode) => {
+    if (node?.kind !== 'remoteFsEntry') {
+      return;
+    }
+    if (node.isDir) {
+      const picked = await vscode.window.showOpenDialog({
+        canSelectFolders: true,
+        canSelectFiles: false,
+        canSelectMany: false,
+        openLabel: t('Download'),
+        title: t('Download {0} to…', node.name),
+      });
+      const dir = picked?.[0];
+      if (dir) {
+        await copyRemoteToLocal(node.serverKey, node.path, node.name, dir);
+      }
+      return;
+    }
+    const dest = await vscode.window.showSaveDialog({ defaultUri: vscode.Uri.file(node.name), saveLabel: t('Download') });
+    if (dest) {
+      await downloadRemoteToUri(node.serverKey, node.path, dest);
+    }
+  });
+
+  /** 从客户端选择文件/文件夹上传到其他服务器目录（拖放之外的保底路径）。 */
+  reg('agentDock.remoteFsUpload', async (node: RemoteFsEntryNode | FolderNode) => {
+    const target = remoteDirTarget(node);
+    if (!target) {
+      return;
+    }
+    const picked = await vscode.window.showOpenDialog({
+      canSelectFiles: true,
+      canSelectFolders: true,
+      canSelectMany: true,
+      openLabel: t('Upload'),
+      title: t('Upload to {0}', target.name),
+    });
+    if (!picked || picked.length === 0) {
+      return;
+    }
+    for (const src of picked) {
+      await copyLocalToRemote(target.serverKey, target.path, src, pathBasename(src.path));
+    }
+    await provider.refreshRemoteDir(target.serverKey, target.path);
   });
 
   /** 在远程目录打开客户端 ssh 终端。 */

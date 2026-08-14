@@ -83,10 +83,19 @@
 
 ## 右键菜单（package.json + getTreeItem 必须同步）
 
-- 远程 fs 节点（`remoteFsFile`/`remoteFsDir`）菜单必须保留完整操作集：新建文件/文件夹、重命名、删除、复制、粘贴、复制路径、打开终端、刷新——删成只剩"刷新"就是回退
-- 本地 fs 节点（`fsFile`/`fsDir`）同样保留：打开、新建、重命名、删除、复制、粘贴、复制路径、复制相对路径、在文件管理器中显示、打开终端
+- 远程 fs 节点（`remoteFsFile`/`remoteFsDir`）菜单必须保留完整操作集：新建文件/文件夹、重命名、移动到、删除、复制、粘贴、复制路径、**下载**、打开终端、刷新——删成只剩"刷新"就是回退；`remoteFsDir`/`folder.remote` 还要有**上传到此处**
+- 本地 fs 节点（`fsFile`/`fsDir`）同样保留：打开、新建、重命名、移动到、删除、复制、粘贴、复制路径、复制相对路径、**下载**、在文件管理器中显示、打开终端；`fsDir`/`folder.workspace` 还要有**上传到此处**
 - `folder.remote`/`folder.workspace` 必须保留"刷新目录"
 - 菜单 `when` 里的 `viewItem` 必须与 `getTreeItem` 的 `contextValue` 完全一致，改任一侧要同步另一侧
+
+## 下载与拖动上传（moveOps.ts + dragDrop.ts）
+
+- **SFTP 流式传输必须经 `pumpStreams`（内含 `rs.pipe(ws)`）**——0.2.4/0.2.5 的 sftpDownload/sftpUpload 建了读写流却没 pipe，数据零流动，下载只建空文件、上传挂起，属严重回退；pumpStreams 有单测锁死（字节搬运/进度合计/取消清理），禁止绕过它手写流逻辑
+- 下载/上传进度走 `runCopyWithProgress`（右下角通知，字节级 increment + 可取消）；ssh2 的 SFTP 写流 `finish` 事件不可靠，结算必须 finish/close 先到先用
+- 下载目的地是**客户端磁盘**：扩展以 UI 侧运行（extensionKind `['ui','workspace']`，`currentNeedsSsh()` 是判据），`vscode.workspace.fs` 直写客户端；当前服务器下载走 `copyCurrentToLocal`（workspace.fs 递归，兼容 file/vscode-remote），其他服务器走 `copyRemoteToLocal`/`downloadRemoteToUri`（SFTP 流式）
+- **禁止**给"当前服务器→客户端"的复制复用 `fsCopyFile` 的 local→local 分支（node `fsp.copyFile` 拿 vscode-remote 路径在客户端盘上找不到）——跨 scheme 一律 `copyUriRecursive`
+- 树拖放除树内 MIME 外必须保留 `'files'` 和 `'text/uri-list'` 两个 MIME（OS 文件管理器拖入上传）：**uri-list 优先**（`URI.file()` 产出的规范 file://，且仅接受 `scheme === 'file'`）、`asFile()` 兜底——**asFile().uri 在 Windows 上是盘符当 scheme 的畸形 URI**（`URI.parse('C:\…')` → scheme='c'），直接用会 stat 失败（0.2.5 回退）；有合法 `uri` 走流式复制（`copyLocalToRemote` / `copyUriRecursive`），无 uri 走 `data()` 全量读入（`OS_DROP_BYTES_CAP` 上限防撑爆宿主）
+- 目录节点另有右键「上传到此处…」（`fsUpload`/`remoteFsUpload`，showOpenDialog 多选）作为拖放的保底路径，删除属回退
 
 ## 轮询与日志
 

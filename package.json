@@ -355,6 +355,18 @@
         "icon": "$(arrow-right)"
       },
       {
+        "command": "agentDock.fsDownload",
+        "title": "%cmd.fsDownload%",
+        "category": "Agent Workspace",
+        "icon": "$(cloud-download)"
+      },
+      {
+        "command": "agentDock.fsUpload",
+        "title": "%cmd.fsUpload%",
+        "category": "Agent Workspace",
+        "icon": "$(cloud-upload)"
+      },
+      {
         "command": "agentDock.fsDelete",
         "title": "%cmd.fsDelete%",
         "category": "Agent Workspace",
@@ -443,6 +455,18 @@
         "title": "%cmd.remoteFsMove%",
         "category": "Agent Workspace",
         "icon": "$(arrow-right)"
+      },
+      {
+        "command": "agentDock.remoteFsDownload",
+        "title": "%cmd.remoteFsDownload%",
+        "category": "Agent Workspace",
+        "icon": "$(cloud-download)"
+      },
+      {
+        "command": "agentDock.remoteFsUpload",
+        "title": "%cmd.remoteFsUpload%",
+        "category": "Agent Workspace",
+        "icon": "$(cloud-upload)"
       },
       {
         "command": "agentDock.remoteFsDelete",
@@ -581,6 +605,16 @@
           "group": "4_copy@2"
         },
         {
+          "command": "agentDock.fsDownload",
+          "when": "view =~ /^agentDock.workspace/ && (viewItem == fsFile || viewItem == fsDir)",
+          "group": "4_copy@4"
+        },
+        {
+          "command": "agentDock.fsUpload",
+          "when": "view =~ /^agentDock.workspace/ && (viewItem == fsDir || viewItem == folder.workspace)",
+          "group": "4_copy@5"
+        },
+        {
           "command": "agentDock.fsRevealOS",
           "when": "view =~ /^agentDock.workspace/ && (viewItem == fsFile || viewItem == fsDir)",
           "group": "4_copy@3"
@@ -659,6 +693,16 @@
           "command": "agentDock.remoteFsCopyPath",
           "when": "view =~ /^agentDock.workspace/ && (viewItem == remoteFsFile || viewItem == remoteFsDir)",
           "group": "4_copy@1"
+        },
+        {
+          "command": "agentDock.remoteFsDownload",
+          "when": "view =~ /^agentDock.workspace/ && (viewItem == remoteFsFile || viewItem == remoteFsDir)",
+          "group": "4_copy@4"
+        },
+        {
+          "command": "agentDock.remoteFsUpload",
+          "when": "view =~ /^agentDock.workspace/ && (viewItem == remoteFsDir || viewItem == folder.remote)",
+          "group": "4_copy@5"
         },
         {
           "command": "agentDock.remoteFsCopy",

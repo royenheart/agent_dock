@@ -13,9 +13,14 @@ import { log } from '../log';
  * 返回的真实节点一致。因此：
  * - 按深度分层：先 reveal 浅层，成功后再 reveal 深层（深层依赖父节点已展开）
  * - 失败进入待重试队列，由外部（onDidChangeTreeData）驱动下一轮，直到成功或超时
+ *   （同一 id 连续失败 MAX_RESTORE_FAILURES 轮即放弃：目标可能已被删除/改名，
+ *   若无上限，pending 永不清空、每轮重试都会走一遍 getParent 链刷屏）
  */
 
 const STORE_KEY = 'agentDock.expandedNodes.v1';
+
+/** 同一 id 连续 reveal 失败的轮数上限，达到即放弃（不删 expanded 记录，下次 reload 重新尝试）。 */
+const MAX_RESTORE_FAILURES = 5;
 
 /** 已展开节点的 nodeId 集合。 */
 export class ExpansionState {
@@ -23,6 +28,8 @@ export class ExpansionState {
   private readonly expanded = new Set<string>();
   private pending = new Set<string>();
   private attempt = 0;
+  /** 每个 id 的连续失败轮数；成功清零，达到上限放弃后清零（onTreeChanged 重排时给全新预算）。 */
+  private readonly failures = new Map<string, number>();
 
   init(memento: vscode.Memento): void {
     this.memento = memento;
@@ -54,6 +61,7 @@ export class ExpansionState {
     const id = nodeId(node);
     if (this.expanded.delete(id)) {
       this.pending.delete(id);
+      this.failures.delete(id);
       this.persist();
     }
   }
@@ -73,6 +81,10 @@ export class ExpansionState {
       }
     }
     this.attempt++;
+    // 全部恢复完成（或已放弃）：后续树变化触发的空调度直接返回，不再空转一轮
+    if (this.pending.size === 0) {
+      return false;
+    }
     const tlog = log.child('tree');
     tlog.debug(`restore round ${this.attempt}: pending=${this.pending.size}`);
 
@@ -84,10 +96,12 @@ export class ExpansionState {
     const ordered = [...this.pending].sort((a, b) => depthOf(a) - depthOf(b));
     this.pending.clear();
 
+    const givenUp: string[] = [];
     for (const id of ordered) {
       const node = nodeFromId(id);
       if (!node) {
         tlog.debug(`restore skip ${id}: cannot reconstruct node`);
+        this.failures.delete(id);
         continue;
       }
       let ok = true;
@@ -99,9 +113,23 @@ export class ExpansionState {
           tlog.debug(`restore reveal ${id} failed: ${String(err)}`);
         }
       }
-      if (!ok) {
+      if (ok) {
+        this.failures.delete(id);
+        continue;
+      }
+      const rounds = (this.failures.get(id) ?? 0) + 1;
+      if (rounds >= MAX_RESTORE_FAILURES) {
+        givenUp.push(id);
+        this.failures.delete(id);
+      } else {
+        this.failures.set(id, rounds);
         this.pending.add(id);
       }
+    }
+    if (givenUp.length > 0) {
+      tlog.warn(
+        `restore: giving up on ${givenUp.length} node(s) after ${MAX_RESTORE_FAILURES} failed rounds (target dir may be gone): ${givenUp.join(', ')}`,
+      );
     }
     if (this.pending.size > 0) {
       tlog.debug(`restore round ${this.attempt}: ${this.pending.size} still pending (will retry on next tree change)`);

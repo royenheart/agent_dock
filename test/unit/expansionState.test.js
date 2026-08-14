@@ -101,3 +101,55 @@ test('ExpansionState: onTreeChanged resets retry counter', async () => {
   await es.restore([view]); // round 2 (attempt reset): fail
   assert.equal(es.ids.length, 1, 'id stays recorded');
 });
+
+test('ExpansionState: restore gives up after consecutive failures (no infinite retry)', async () => {
+  const m = fakeMemento({ 'agentDock.expandedNodes.v1': ['server:__current__'] });
+  const es = new ExpansionState();
+  es.init(m);
+  let calls = 0;
+  const view = {
+    reveal: async () => {
+      calls++;
+      throw new Error('gone');
+    },
+  };
+  let hasPending = true;
+  let rounds = 0;
+  while (hasPending && rounds < 20) {
+    hasPending = await es.restore([view]);
+    rounds++;
+  }
+  assert.equal(hasPending, false, 'must stop retrying after the failure cap');
+  assert.equal(calls, 5, 'exactly MAX_RESTORE_FAILURES reveal attempts');
+  assert.equal(es.ids.length, 1, 'given-up id stays recorded (not destructive; reload retries)');
+  // 放弃后再调度（树变化触发）是空调度：不再 reveal、不再报 pending
+  assert.equal(await es.restore([view]), false);
+  assert.equal(calls, 5, 'no further reveal calls after give-up');
+});
+
+test('ExpansionState: permanent failure of one node does not block another from retrying', async () => {
+  const m = fakeMemento({ 'agentDock.expandedNodes.v1': ['server:__current__', 'folder:__current__:/tmp/x'] });
+  const es = new ExpansionState();
+  es.init(m);
+  let folderCalls = 0;
+  const view = {
+    reveal: async (node) => {
+      if (node.kind === 'server') {
+        throw new Error('gone');
+      }
+      folderCalls++;
+      if (folderCalls === 1) {
+        throw new Error('not ready');
+      }
+    },
+  };
+  await es.restore([view]); // server fail(1), folder fail(1) → both pending
+  const second = await es.restore([view]); // server fail(2), folder ok → folder cleared
+  assert.equal(second, true, 'server still pending');
+  await es.restore([view]);
+  await es.restore([view]);
+  const fifth = await es.restore([view]); // server 第 5 次失败 → 放弃
+  assert.equal(fifth, false, 'server given up, nothing pending');
+  assert.equal(folderCalls, 2, 'folder succeeded on its second round');
+  assert.deepEqual(es.ids.sort(), ['folder:__current__:/tmp/x', 'server:__current__']);
+});
