@@ -12,6 +12,7 @@ import { detectListeningServices, isForwardActive, type ListeningService } from 
 import { joinRemotePath, remoteUri } from '../ssh/remoteFsProvider';
 import { parseLsAp } from '../ssh/remoteFsParse';
 import { parseDirMtimeLine } from '../ssh/remoteFsPoll';
+import { remoteGitStore } from '../git/remoteGit';
 import { isUnder, normPath, pathBasename, uriFsPath } from '../paths';
 import { buildSessionTree, groupByCwd, partitionSessions, touchLru, type SessionTreeNode } from './structure';
 import { createSerialQueue } from '../batch';
@@ -359,6 +360,8 @@ export class WorkspaceProvider implements vscode.TreeDataProvider<Node> {
     void this.persistRemoteDirCache();
     this.store.invalidate(key);
     void this.store.persist();
+    // 手动刷新同时重扫所有已知远端仓库的 git 状态（跳过冷却）
+    remoteGitStore.invalidateAll();
     this.onDidChangeEmitter.fire(undefined);
   }
 
@@ -417,6 +420,10 @@ export class WorkspaceProvider implements vscode.TreeDataProvider<Node> {
         item.iconPath = new vscode.ThemeIcon('folder');
         item.contextValue = node.workspaceUri ? 'folder.workspace' : 'folder.remote';
         item.tooltip = node.path;
+        // 远程固定目录：挂 resourceUri 以便 FileDecorationProvider 渲染 git 状态
+        if (!node.workspaceUri) {
+          item.resourceUri = remoteUri(node.serverKey, node.path);
+        }
         item.id = nodeId(node);
         return item;
       }
@@ -481,9 +488,10 @@ export class WorkspaceProvider implements vscode.TreeDataProvider<Node> {
         item.contextValue = node.isDir ? 'remoteFsDir' : 'remoteFsFile';
         item.iconPath = node.isDir ? vscode.ThemeIcon.Folder : vscode.ThemeIcon.File;
         item.tooltip = t('Live file on {0} (auto-refreshes, editable)', node.serverKey);
+        // 目录也挂 resourceUri：让 FileDecorationProvider 渲染 git 状态（文件保持可点击打开）
+        const uri = remoteUri(node.serverKey, node.path);
+        item.resourceUri = uri;
         if (!node.isDir) {
-          const uri = remoteUri(node.serverKey, node.path);
-          item.resourceUri = uri;
           item.command = { command: 'vscode.open', title: 'Open File', arguments: [uri] };
         }
         item.id = nodeId(node);
@@ -635,6 +643,11 @@ export class WorkspaceProvider implements vscode.TreeDataProvider<Node> {
       ];
     }
     const pinnedPaths = (node.server?.folders ?? []).map(normPath);
+    // 服务器节点展开时即为其固定目录解析 git 仓库（后台，去抖），
+    // 让固定目录节点在未展开子目录前也能显示 git 状态徽标
+    for (const p of pinnedPaths) {
+      remoteGitStore.request(node.key, p);
+    }
     const nodes: Node[] = pinnedPaths.map((p) => ({
       kind: 'folder',
       serverKey: node.key,
@@ -938,6 +951,8 @@ export class WorkspaceProvider implements vscode.TreeDataProvider<Node> {
           const d = this.expandedDirs.get(key);
           if (d) {
             await this.fetchRemoteDir(d.serverKey, d.path, undefined, true);
+            // 目录内容变化 → 其所属仓库的 git 状态失效，安排重扫
+            remoteGitStore.invalidate(d.serverKey, d.path);
           }
         }
         log.child('fs').debug(`dir poll: ${changedKeys.length} remote dir(s) changed → tree refreshed`);
@@ -977,6 +992,8 @@ export class WorkspaceProvider implements vscode.TreeDataProvider<Node> {
       ];
     }
     log.child('fs').debug(`${server.name}:${path} → ${res.stdout.split('\n').length - 1} entries`);
+    // 列出目录后确保其 git 状态可用（合并去抖 + 按仓库缓存，不阻塞本次渲染）
+    remoteGitStore.request(serverKey, path);
     const entries = parseLsAp(res.stdout);
     const dirs: Node[] = [];
     const files: Node[] = [];

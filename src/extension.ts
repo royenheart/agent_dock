@@ -1,5 +1,6 @@
 import * as vscode from 'vscode';
 import { WorkspaceProvider, type Node } from './tree/workspaceProvider';
+import { createDragAndDropController } from './tree/dragDrop';
 import { ExpansionState } from './tree/expansionState';
 import { SessionDecorationProvider } from './tree/sessionDecorations';
 import { remoteFsProvider, REMOTE_SCHEME } from './ssh/remoteFsProvider';
@@ -14,6 +15,9 @@ import { clientTerminalOptions, initClientTerminalPersistence, isAgentDockTermin
 import { initNativeTerminalPersistence, markNativeTerminalsShuttingDown, reconcileNativeTerminal, syncNativeTerminalName, untrackNativeTerminal } from './ssh/nativeTerminal';
 import { initForwardStore, restoreActiveForwards } from './ssh/portForward';
 import { AutoSaveManager } from './autoSave';
+import { RemoteGitDecorationProvider } from './git/gitDecorations';
+import { createRemoteScmController } from './git/remoteScm';
+import { remoteGitStore } from './git/remoteGit';
 import { t } from './i18n';
 import { log } from './log';
 
@@ -43,9 +47,14 @@ export function activate(context: vscode.ExtensionContext): AgentDockApi {
   const tree = vscode.window.createTreeView('agentDock.workspace', {
     treeDataProvider: provider,
     showCollapseAll: true,
+    // 树内拖放：远程↔远程移动、远程↔本地复制（见 tree/dragDrop.ts）
+    dragAndDropController: createDragAndDropController(provider),
   });
   const decorations = new SessionDecorationProvider(provider.store);
   provider.onDidChangeTreeData(() => decorations.refresh());
+  // 其他服务器文件的 git 状态装饰（树 + 源代码管理视图共用）
+  const gitDecorations = new RemoteGitDecorationProvider();
+  const remoteScm = createRemoteScmController();
   const settings = new SettingsViewProvider(context.extensionUri);
   const syncSelection = (e: vscode.TreeViewSelectionChangeEvent<Node>): void => {
     [provider.selectedNode] = e.selection;
@@ -91,6 +100,10 @@ export function activate(context: vscode.ExtensionContext): AgentDockApi {
     { dispose: () => restoreTimer && clearTimeout(restoreTimer) },
     provider.onDidChangeTreeData(() => scheduleRestore()),
     vscode.window.registerFileDecorationProvider(decorations),
+    vscode.window.registerFileDecorationProvider(gitDecorations),
+    { dispose: () => gitDecorations.dispose() },
+    { dispose: () => remoteScm.dispose() },
+    { dispose: () => remoteGitStore.dispose() },
     vscode.workspace.registerFileSystemProvider(REMOTE_SCHEME, remoteFsProvider, {
       isCaseSensitive: true,
       // 其他服务器文件可写（writeFile/createDirectory/delete/rename 走 SFTP）；

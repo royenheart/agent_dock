@@ -236,6 +236,23 @@ export function getAutoSaveMode(): AutoSaveMode {
   return raw === 'afterDelay' || raw === 'onFocusChange' || raw === 'onWindowChange' ? raw : 'off';
 }
 
+/** 其他服务器的 git 状态追踪总开关（关闭后不发起任何 git 探测）。 */
+export function getGitStatusEnable(): boolean {
+  return vscode.workspace.getConfiguration(SECTION).get<boolean>('gitStatusEnable', true);
+}
+
+/** 单个仓库最多追踪的变更文件数；超过即停止继续追踪（与原生 git statusLimit 语义一致）。 */
+export function getGitStatusLimit(): number {
+  const n = vscode.workspace.getConfiguration(SECTION).get<number>('gitStatusLimit', 5000);
+  return Number.isFinite(n) ? Math.min(Math.max(Math.floor(n), 100), 200000) : 5000;
+}
+
+/** 单次远端 git 探测（仓库定位 / 状态扫描）的超时时间（秒）。 */
+export function getGitStatusTimeoutMs(): number {
+  const seconds = vscode.workspace.getConfiguration(SECTION).get<number>('gitStatusTimeoutSeconds', 15);
+  return Math.min(Math.max(seconds, 3), 120) * 1000;
+}
+
 export function getAutoSaveDelayMs(): number {
   const ms = vscode.workspace.getConfiguration(SECTION).get<number>('autoSaveDelay', 1000);
   return Number.isFinite(ms) ? Math.min(Math.max(ms, 0), 60_000) : 1000;

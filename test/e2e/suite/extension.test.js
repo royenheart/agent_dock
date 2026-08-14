@@ -85,6 +85,33 @@ suite('agent-workspace e2e', () => {
     assert.equal(dec.badge, 'AI');
   });
 
+  test('git status: remote dir/folder nodes expose resourceUri for decoration', () => {
+    const dir = api.provider.getTreeItem({ kind: 'remoteFsEntry', serverKey: 'srv', path: '/x/d', name: 'd', isDir: true });
+    assert.ok(dir.resourceUri, 'remoteFsDir node must expose resourceUri');
+    assert.equal(dir.resourceUri.scheme, 'agentdock-remote');
+    const folder = api.provider.getTreeItem({ kind: 'folder', serverKey: 'srv', path: '/x', label: 'x' });
+    assert.ok(folder.resourceUri, 'folder.remote node must expose resourceUri');
+    assert.equal(folder.resourceUri.scheme, 'agentdock-remote');
+  });
+
+  test('git status: decoration mapping + provider scheme filtering', async () => {
+    const { decorationFor, RemoteGitDecorationProvider } = require('../../../out/git/gitDecorations');
+    // 字母徽标 + 原生 git 主题色（与用户主题下原生 git 状态颜色一致）
+    assert.equal(decorationFor('modified').badge, 'M');
+    assert.equal(decorationFor('modified').color.id, 'gitDecoration.modifiedResourceForeground');
+    assert.equal(decorationFor('untracked').badge, 'U');
+    assert.equal(decorationFor('untracked').color.id, 'gitDecoration.untrackedResourceForeground');
+    assert.equal(decorationFor('added').badge, 'A');
+    assert.equal(decorationFor('deleted').badge, 'D');
+    assert.equal(decorationFor('conflict').badge, 'C');
+    // provider 只处理 agentdock-remote；空 store 时安全返回 undefined（不崩溃）
+    const provider = new RemoteGitDecorationProvider();
+    assert.equal(provider.provideFileDecoration(vscode.Uri.file('/x/a.txt')), undefined, 'local file ignored');
+    const remoteUri = vscode.Uri.from({ scheme: 'agentdock-remote', authority: 'srv', path: '/x/a.txt' });
+    assert.equal(provider.provideFileDecoration(remoteUri), undefined, 'no scanned status → undefined');
+    provider.dispose();
+  });
+
   test('opencode transcript via sqlite fixture', async () => {
     const session = { agent: 'opencode', id: 'ses_e2e_inws', title: 't', cwd: '', timeCreated: 0, timeUpdated: 0 };
     const res = await execLocal(buildTranscriptScript(session), 30_000);

@@ -19,6 +19,9 @@ jobs:
       # e2e 用 @vscode/test-electron 加载的正是 main=dist/extension.js 的 bundle
       - run: npm run build
       - run: npm run test:unit
+      # git 状态追踪端到端（fake ssh + 本地 git，无需外部服务器）
+      - name: Git status integration (fake ssh)
+        run: node test/e2e-git.js
       - name: E2E (real VS Code, xvfb)
         run: xvfb-run -a node test/e2e/runTest.js
       # 打包产物防回归（统一入口 scripts/package.mjs 内置验证：node-pty prebuilds、

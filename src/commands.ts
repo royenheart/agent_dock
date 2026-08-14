@@ -1,5 +1,4 @@
 import * as os from 'node:os';
-import * as fsp from 'node:fs/promises';
 import * as vscode from 'vscode';
 import type { PortForward, ServerConfig } from './model';
 import {
@@ -19,7 +18,6 @@ import { resumeCommand } from './agents/resume';
 import { buildDiscoveryScript } from './agents/discoveryScript';
 import { parseDiscoveryOutput } from './agents/parse';
 import { execRemote, sshDestination, shq } from './ssh/remoteExec';
-import { buildListDirsScript } from './ssh/sshArgs';
 import { joinRemotePath } from './ssh/remoteFsParse';
 import { currentFileUri, currentHomeDir, currentNeedsSsh, currentServerConfig } from './ssh/currentExec';
 import { openClientTerminal, sshSpawnSpec } from './ssh/clientTerminal';
@@ -27,7 +25,8 @@ import { trackNativeTerminal } from './ssh/nativeTerminal';
 import { forwardSpec, setOnDidChange, startForward, stopForward } from './ssh/portForward';
 import { readSshConfigHosts, type SshHostEntry } from './ssh/sshConfig';
 import { normPath, pathBasename, uriFsPath } from './paths';
-import { pickDirectory, type SubdirsResult } from './views/dirPicker';
+import { pickDirectory } from './views/dirPicker';
+import { localListSubdirs, localMove, pickLocalMoveTarget, pickRemoteMoveTarget, remoteListSubdirs, remoteMove, remoteParentPath } from './tree/moveOps';
 import { SessionPanel, type SessionTarget } from './views/sessionPanel';
 import type { Node, WorkspaceProvider } from './tree/workspaceProvider';
 import { CURRENT_SERVER_KEY } from './tree/workspaceProvider';
@@ -257,30 +256,6 @@ async function ensureServerSaved(entry: SshHostEntry): Promise<ServerConfig> {
   };
   await addServer(server);
   return server;
-}
-
-async function localListSubdirs(path: string): Promise<SubdirsResult> {
-  try {
-    const entries = await fsp.readdir(path, { withFileTypes: true });
-    return { kind: 'ok', dirs: entries.filter((e) => e.isDirectory()).map((e) => e.name) };
-  } catch {
-    return { kind: 'missing' };
-  }
-}
-
-const NOENT_MARKER = '__AGENTDOCK_NOENT_7f3a9__';
-
-function remoteListSubdirs(server: ServerConfig): (path: string) => Promise<SubdirsResult> {
-  return async (path: string) => {
-    const res = await execRemote(server, buildListDirsScript(path, NOENT_MARKER), 15_000);
-    if (res.code !== 0) {
-      return { kind: 'conn', detail: res.stderr.trim().slice(0, 120) || (res.timedOut ? 'timeout' : `exit ${res.code}`) };
-    }
-    if (res.stdout.includes(NOENT_MARKER)) {
-      return { kind: 'missing' };
-    }
-    return { kind: 'ok', dirs: res.stdout.split('\n').map((s) => s.trim()).filter(Boolean) };
-  };
 }
 
 async function addRemoteDirectory(server: ServerConfig, provider: WorkspaceProvider): Promise<void> {
@@ -838,6 +813,21 @@ export function registerCommands(context: vscode.ExtensionContext, provider: Wor
     vscode.window.setStatusBarMessage(t('Refreshed {0}', node.name), 3000);
   });
 
+  /** 移动本地文件/目录到其他目录（选择目标目录后 rename；覆盖需确认）。 */
+  reg('agentDock.fsMove', async (node: FsEntryNode) => {
+    if (node?.kind !== 'fsEntry') {
+      return;
+    }
+    const destDir = await pickLocalMoveTarget(node.name);
+    if (!destDir) {
+      return;
+    }
+    const result = await localMove(node.uri, node.name, node.isDir, vscode.Uri.file(destDir));
+    if (result === 'ok') {
+      provider.refreshFs();
+    }
+  });
+
   /** 右键远程目录「刷新」：清缓存重列该目录并重绘树。同时支持已 pin 的远程文件夹节点与本地 workspace 文件夹。 */
   reg('agentDock.remoteFsRefreshDir', async (node: RemoteFsEntryNode | FolderNode) => {
     if (!node) {
@@ -857,12 +847,6 @@ export function registerCommands(context: vscode.ExtensionContext, provider: Wor
       }
     }
   });
-
-  /** 远端路径的父目录（路径本身是 / 时返回 / ）。 */
-  const remoteParentPath = (path: string): string => {
-    const idx = path.lastIndexOf('/');
-    return idx <= 0 ? '/' : path.slice(0, idx);
-  };
 
   /** 解析远程目录目标：remoteFsDir 或 folder.remote 都适用。 */
   const remoteDirTarget = (node: RemoteFsEntryNode | FolderNode | undefined): { serverKey: string; path: string; name: string } | undefined => {
@@ -954,6 +938,27 @@ export function registerCommands(context: vscode.ExtensionContext, provider: Wor
     await runRemoteFsOp(node.serverKey, remoteParentPath(node.path), `mv -- ${shq(node.path)} ${shq(target)}`, (e) =>
       t('Failed to rename {0}: {1}', node.name, String(e)),
     );
+  });
+
+  /** 移动远程文件/目录到同一服务器的其他目录（选择目标目录后 ssh mv；覆盖需确认）。 */
+  reg('agentDock.remoteFsMove', async (node: RemoteFsEntryNode) => {
+    if (node?.kind !== 'remoteFsEntry') {
+      return;
+    }
+    const server = getServers().find((s) => s.name === node.serverKey);
+    if (!server) {
+      vscode.window.showErrorMessage(t('Server {0} not found in config', node.serverKey));
+      return;
+    }
+    const destDir = await pickRemoteMoveTarget(server, node.name);
+    if (!destDir) {
+      return;
+    }
+    const result = await remoteMove(node.serverKey, node.path, node.name, node.isDir, destDir);
+    if (result === 'ok') {
+      await provider.refreshRemoteDir(node.serverKey, remoteParentPath(node.path));
+      await provider.refreshRemoteDir(node.serverKey, destDir);
+    }
   });
 
   /** 删除远程文件/目录（ssh rm，带确认）。 */

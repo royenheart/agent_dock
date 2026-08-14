@@ -26,6 +26,7 @@
   "cmd.fsNewFile": "New File…",
   "cmd.fsNewFolder": "New Folder…",
   "cmd.fsRename": "Rename…",
+  "cmd.fsMove": "Move to…",
   "cmd.fsDelete": "Delete",
   "cmd.fsOpenTerminal": "Open in Integrated Terminal",
   "cmd.fsRemoveFromWorkspace": "Remove Folder from Workspace",
@@ -43,6 +44,7 @@
   "cmd.remoteFsNewFile": "New File…",
   "cmd.remoteFsNewFolder": "New Folder…",
   "cmd.remoteFsRename": "Rename…",
+  "cmd.remoteFsMove": "Move to…",
   "cmd.remoteFsDelete": "Delete",
   "cmd.remoteFsCopyPath": "Copy Path",
   "cmd.remoteFsCopy": "Copy",
@@ -54,5 +56,8 @@
   "config.sshTransport.description": "Transport for operations on other servers: \"persistent\" keeps one SSH connection per server (SFTP for file ops, exec channels for scripts — low latency, no per-operation ssh process); \"spawn\" runs one ssh process per operation (legacy, no persistent connection).",
   "config.sshHostKeyMode.description": "Host key verification for persistent SSH connections: \"yes\" requires the host to be in ~/.ssh/known_hosts, \"accept-new\" automatically trusts and records unknown hosts, \"no\" skips verification (not recommended).",
   "config.autoSave.description": "Auto-save remote files of other servers (same policies as native `files.autoSave`, applied only to `agentdock-remote` files): `off` disables; `afterDelay` saves `agentDock.autoSaveDelay` ms after the last edit; `onFocusChange` saves when the editor loses focus (switch editor / focus terminal / window blur); `onWindowChange` saves when the window loses focus.",
-  "config.autoSaveDelay.description": "Delay (ms) before auto-saving after the last edit when `agentDock.autoSave` is `afterDelay`."
+  "config.autoSaveDelay.description": "Delay (ms) before auto-saving after the last edit when `agentDock.autoSave` is `afterDelay`.",
+  "config.gitStatusEnable.description": "Show git status (modified / added / deleted / untracked / conflict, colored with native git theme colors) on files and folders of other servers in the Agent Workspace tree and in the Source Control view. Disable to stop all git probing over SSH.",
+  "config.gitStatusLimit.description": "Maximum changed files tracked per remote repository before stopping further tracking (mirrors native `git.statusLimit`). Additional files beyond this limit are not decorated.",
+  "config.gitStatusTimeoutSeconds.description": "Timeout (seconds) for a single remote git probe (repository root detection / status scan)."
 }

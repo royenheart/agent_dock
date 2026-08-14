@@ -3,7 +3,7 @@
   "displayName": "Agent Dock",
   "icon": "media/logo.png",
   "description": "Agent Dock — cross-server AI agent workspace: files of the current server plus opencode / Codex CLI / Claude Code sessions across SSH servers.",
-  "version": "0.2.3",
+  "version": "0.2.4",
   "publisher": "royenheart",
   "license": "MIT",
   "engines": {
@@ -213,6 +213,25 @@
           "minimum": 0,
           "maximum": 60000,
           "description": "%config.autoSaveDelay.description%"
+        },
+        "agentDock.gitStatusEnable": {
+          "type": "boolean",
+          "default": true,
+          "description": "%config.gitStatusEnable.description%"
+        },
+        "agentDock.gitStatusLimit": {
+          "type": "number",
+          "default": 5000,
+          "minimum": 100,
+          "maximum": 200000,
+          "description": "%config.gitStatusLimit.description%"
+        },
+        "agentDock.gitStatusTimeoutSeconds": {
+          "type": "number",
+          "default": 15,
+          "minimum": 3,
+          "maximum": 120,
+          "description": "%config.gitStatusTimeoutSeconds.description%"
         }
       }
     },
@@ -330,6 +349,12 @@
         "icon": "$(edit)"
       },
       {
+        "command": "agentDock.fsMove",
+        "title": "%cmd.fsMove%",
+        "category": "Agent Workspace",
+        "icon": "$(arrow-right)"
+      },
+      {
         "command": "agentDock.fsDelete",
         "title": "%cmd.fsDelete%",
         "category": "Agent Workspace",
@@ -412,6 +437,12 @@
         "title": "%cmd.remoteFsRename%",
         "category": "Agent Workspace",
         "icon": "$(edit)"
+      },
+      {
+        "command": "agentDock.remoteFsMove",
+        "title": "%cmd.remoteFsMove%",
+        "category": "Agent Workspace",
+        "icon": "$(arrow-right)"
       },
       {
         "command": "agentDock.remoteFsDelete",
@@ -520,9 +551,14 @@
           "group": "3_modify@1"
         },
         {
-          "command": "agentDock.fsDelete",
+          "command": "agentDock.fsMove",
           "when": "view =~ /^agentDock.workspace/ && (viewItem == fsFile || viewItem == fsDir)",
           "group": "3_modify@2"
+        },
+        {
+          "command": "agentDock.fsDelete",
+          "when": "view =~ /^agentDock.workspace/ && (viewItem == fsFile || viewItem == fsDir)",
+          "group": "3_modify@3"
         },
         {
           "command": "agentDock.fsCopyPath",
@@ -557,7 +593,7 @@
         {
           "command": "agentDock.fsRemoveFromWorkspace",
           "when": "view =~ /^agentDock.workspace/ && viewItem == folder.workspace",
-          "group": "3_modify@3"
+          "group": "3_modify@4"
         },
         {
           "command": "agentDock.createSession",
@@ -610,9 +646,14 @@
           "group": "3_modify@1"
         },
         {
-          "command": "agentDock.remoteFsDelete",
+          "command": "agentDock.remoteFsMove",
           "when": "view =~ /^agentDock.workspace/ && (viewItem == remoteFsFile || viewItem == remoteFsDir)",
           "group": "3_modify@2"
+        },
+        {
+          "command": "agentDock.remoteFsDelete",
+          "when": "view =~ /^agentDock.workspace/ && (viewItem == remoteFsFile || viewItem == remoteFsDir)",
+          "group": "3_modify@3"
         },
         {
           "command": "agentDock.remoteFsCopyPath",
@@ -637,7 +678,7 @@
         {
           "command": "agentDock.remoteFsRemoveFromWorkspace",
           "when": "view =~ /^agentDock.workspace/ && viewItem == folder.remote",
-          "group": "3_modify@3"
+          "group": "3_modify@4"
         },
         {
           "command": "agentDock.remoteFsRefreshDir",
@@ -653,6 +694,7 @@
     "test": "npm run test:unit",
     "test:unit": "node --test \"test/unit/*.test.js\"",
     "test:e2e": "xvfb-run -a node test/e2e/runTest.js",
+    "test:e2e:git": "node test/e2e-git.js",
     "test:e2e:reload:phase1": "AGENTWS_RELOAD_PHASE=1 xvfb-run -a node test/e2e/runTest.js",
     "test:e2e:reload:phase2": "AGENTWS_RELOAD_PHASE=2 xvfb-run -a node test/e2e/runTest.js",
     "vscode:prepublish": "npm run build",
