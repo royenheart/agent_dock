@@ -11,7 +11,7 @@ import { SessionPanel } from './views/sessionPanel';
 import { registerCommands } from './commands';
 import { ensureCurrentServerRegistered } from './config';
 import { setExtensionKind } from './ssh/currentExec';
-import { clientTerminalOptions, initClientTerminalPersistence, isAgentDockTerminal, isTrackedTerminal, markClientTerminalsShuttingDown, syncTrackedTerminalName, trackClientTerminal, untrackClientTerminal } from './ssh/clientTerminal';
+import { clientTerminalOptions, flushClientTerminalPersistence, initClientTerminalPersistence, isAgentDockTerminal, isTrackedTerminal, markClientTerminalsShuttingDown, openClientTerminal, syncTrackedTerminalName, trackClientTerminal, untrackClientTerminal } from './ssh/clientTerminal';
 import { initNativeTerminalPersistence, markNativeTerminalsShuttingDown, reconcileNativeTerminal, syncNativeTerminalName, untrackNativeTerminal } from './ssh/nativeTerminal';
 import { initForwardStore, restoreActiveForwards } from './ssh/portForward';
 import { AutoSaveManager } from './autoSave';
@@ -33,6 +33,8 @@ export interface AgentDockApi {
   workspaceState: vscode.Memento;
   /** Agent Workspace TreeView（演示录屏/测试驱动 UI 展开用）。 */
   treeView: vscode.TreeView<Node>;
+  /** 客户端终端工厂（e2e 用扩展自身 dist 里的 ClientPty 创建终端）。 */
+  openClientTerminal: typeof openClientTerminal;
 }
 
 export function activate(context: vscode.ExtensionContext): AgentDockApi {
@@ -205,7 +207,7 @@ export function activate(context: vscode.ExtensionContext): AgentDockApi {
   // 演示模式（AGENTDOCK_DEMO=1，仅 README 录屏脚本使用；正常用户不触发）
   void maybeRunDemo(provider, tree);
 
-  return { provider, decorations, expansion: expansionState, workspaceState: context.workspaceState, treeView: tree };
+  return { provider, decorations, expansion: expansionState, workspaceState: context.workspaceState, treeView: tree, openClientTerminal };
 }
 
 export function deactivate(): Promise<void> {
@@ -215,7 +217,8 @@ export function deactivate(): Promise<void> {
   expansionStateForShutdown?.markShuttingDown();
   // 关闭所有持久 SSH 会话（SFTP/exec 通道所在的长连接）
   const sessions = disposeSshSessions();
-  return expansionStateForShutdown
-    ? expansionStateForShutdown.flush().then(() => sessions)
-    : sessions;
+  return Promise.all([
+    expansionStateForShutdown?.flush() ?? Promise.resolve(),
+    flushClientTerminalPersistence(),
+  ]).then(() => sessions);
 }

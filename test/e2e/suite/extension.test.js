@@ -171,6 +171,24 @@ suite('agent-workspace e2e', () => {
     }
   });
 
+  test('client terminal user rename is persisted even without onDidChangeTerminalState', async () => {
+    const term = api.openClientTerminal({
+      name: 'ssh: rename-e2e',
+      persist: { name: 'ssh: rename-e2e', kind: 'ssh', serverName: 'rename-e2e' },
+    });
+    await new Promise((r) => setTimeout(r, 800));
+    // 内部 rename 命令只更新 Terminal.name，不派发 onDidChangeTerminalState——
+    // 名称同步必须靠 1s 轮询兜底捕获（生产 dist 模块的真实 ClientPty 路径）
+    await vscode.commands.executeCommand('workbench.action.terminal.renameWithArg', { name: 'renamed-e2e' });
+    await new Promise((r) => setTimeout(r, 1800));
+    const saved = api.workspaceState.get('agentDock.clientTerminals.v1', []);
+    assert.ok(
+      saved.some((d) => d.name === 'renamed-e2e'),
+      `renamed terminal should be persisted, have ${JSON.stringify(saved)}`,
+    );
+    term.dispose();
+  });
+
   test('file node commands: copy path, new file, rename', async () => {
     const children = await currentServerChildren();
     const wsFolder = children.find((n) => n.kind === 'folder' && n.workspaceUri);

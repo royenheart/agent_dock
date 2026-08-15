@@ -12,7 +12,10 @@ Module._resolveFilename = function (request, ...args) {
 };
 const {
   clientTerminalOptions,
+  flushClientTerminalPersistence,
   initClientTerminalPersistence,
+  markClientTerminalsShuttingDown,
+  syncAllTrackedTerminalNames,
   trackClientTerminal,
   untrackClientTerminal,
   syncTrackedTerminalName,
@@ -49,11 +52,28 @@ test('terminal name sync: rename is persisted so reload restores the new name', 
   // 用户 rename：terminal.name 变了，sync 后持久化描述跟着变
   term.name = 'my custom name';
   syncTrackedTerminalName(term);
+  await flushClientTerminalPersistence();
 
   const saved = memento.store['agentDock.clientTerminals.v1'];
   assert.equal(saved.length, 1);
   assert.equal(saved[0].name, 'my custom name', 'rename must be persisted');
 
+  untrackClientTerminal(term);
+});
+
+test('terminal name poll sync: rename without state event is persisted', async () => {
+  const memento = makeMemento();
+  initClientTerminalPersistence(memento);
+
+  const term = fakeTerminal('ssh: server1');
+  trackClientTerminal(term, { name: 'ssh: server1', kind: 'ssh', serverName: 'server1' });
+  // VSCode 对用户 rename 不保证派发 onDidChangeTerminalState：轮询兜底直接扫所有 tracked 终端
+  term.name = 'my custom name';
+  syncAllTrackedTerminalNames();
+  await flushClientTerminalPersistence();
+
+  const saved = memento.store['agentDock.clientTerminals.v1'];
+  assert.equal(saved[0].name, 'my custom name', 'poll fallback must persist the rename');
   untrackClientTerminal(term);
 });
 
@@ -63,6 +83,7 @@ test('terminal name sync: no-op when name unchanged or terminal untracked', asyn
 
   const term = fakeTerminal('same');
   trackClientTerminal(term, { name: 'same', kind: 'shell' });
+  await flushClientTerminalPersistence();
   syncTrackedTerminalName(term); // 名字没变：不重写
   assert.equal(memento.store['agentDock.clientTerminals.v1'][0].name, 'same');
 
@@ -116,4 +137,21 @@ test('restore: same-name saved terminals are all rebuilt (dedupe uses pre-restor
   } finally {
     vscode.window.terminals = prev;
   }
+});
+
+// 放在文件末尾：markClientTerminalsShuttingDown 会把模块级 shuttingDown 置真，
+// 与真实 deactivate 一致，之后的测试不会再写 memento。
+test('terminal name sync: shutdown does a final rename sync before persisting', async () => {
+  const memento = makeMemento();
+  initClientTerminalPersistence(memento);
+
+  const term = fakeTerminal('ssh: server1');
+  trackClientTerminal(term, { name: 'ssh: server1', kind: 'ssh', serverName: 'server1' });
+  term.name = 'renamed-right-before-reload';
+  markClientTerminalsShuttingDown();
+  await flushClientTerminalPersistence();
+
+  const saved = memento.store['agentDock.clientTerminals.v1'];
+  assert.equal(saved[0].name, 'renamed-right-before-reload', 'deactivate final sync must capture the latest name');
+  untrackClientTerminal(term);
 });

@@ -5,6 +5,7 @@ import { spawn, type ChildProcess } from 'node:child_process';
 import * as vscode from 'vscode';
 import type { ServerConfig } from '../model';
 import { buildClientShellSpawn, buildInteractiveSshArgs, buildPtySshArgs, type SpawnSpec, type TermDimensions } from './sshArgs';
+import { createSerialQueue } from '../batch';
 import { getServers } from '../config';
 import { t } from '../i18n';
 import { log } from '../log';
@@ -387,6 +388,13 @@ export interface SavedClientTerminal {
 const TERMINAL_STORE_KEY = 'agentDock.clientTerminals.v1';
 let terminalMemento: vscode.Memento | undefined;
 const liveTerminals = new Map<vscode.Terminal, SavedClientTerminal>();
+/** 持久化写入串行化：reload 前最后一次改名不会与旧快照竞争，完成顺序与调用顺序一致。 */
+const persistQueue = createSerialQueue();
+let lastPersist: Promise<void> = Promise.resolve();
+/** VSCode 对用户 rename 不一定派发 onDidChangeTerminalState（实测改名后事件为空），
+ *  因此按 1s 轮询 tracked 终端的 name，作为事件同步的兜底。 */
+let namePollTimer: ReturnType<typeof setInterval> | undefined;
+const NAME_POLL_MS = 1000;
 
 /**
  * 窗口 reload 时 VSCode 会以 Shutdown reason 销毁所有扩展 pty 终端（pty 活在扩展宿主里，
@@ -400,13 +408,24 @@ let shuttingDown = false;
 let untrackPersistTimer: ReturnType<typeof setTimeout> | undefined;
 const UNTRACK_PERSIST_DEBOUNCE_MS = 2000;
 
-/** 扩展 deactivate 时调用：之后的 close 事件与持久化写入一律忽略。 */
+/** 扩展 deactivate 时调用：先补一轮名称同步，之后的 close 事件与持久化写入一律忽略。 */
 export function markClientTerminalsShuttingDown(): void {
+  // 用户可能刚 rename 完立刻 reload：轮询还没到下一拍，deactivate 里兜底同步一次
+  syncAllTrackedTerminalNames();
   shuttingDown = true;
+  if (namePollTimer) {
+    clearInterval(namePollTimer);
+    namePollTimer = undefined;
+  }
   if (untrackPersistTimer) {
     clearTimeout(untrackPersistTimer);
     untrackPersistTimer = undefined;
   }
+}
+
+/** 等待已入队的终端描述持久化完成（deactivate 时使用）。 */
+export async function flushClientTerminalPersistence(): Promise<void> {
+  await lastPersist;
 }
 
 /** 注入持久化存储（workspaceState），并在窗口重载后重建已保存的客户端终端。 */
@@ -447,6 +466,10 @@ export function initClientTerminalPersistence(memento: vscode.Memento): void {
   } else {
     tlog.debug('no saved client terminals to restore');
   }
+  if (!namePollTimer) {
+    namePollTimer = setInterval(() => syncAllTrackedTerminalNames(), NAME_POLL_MS);
+    namePollTimer.unref?.();
+  }
 }
 
 function createTerminalFromSaved(d: SavedClientTerminal): vscode.Terminal | undefined {
@@ -469,13 +492,17 @@ function persistTerminals(): void {
     log.child('term').debug('persistTerminals skipped: no memento (initClientTerminalPersistence not called?)');
     return;
   }
-  log.child('term').debug(`persistTerminals: writing ${liveTerminals.size} terminal(s)`, {
-    names: [...liveTerminals.values()].map((d) => d.name),
+  // 浅拷贝快照：描述对象之后可能被 sync 改名，避免异步 update 落盘时已被改写
+  const snapshot = [...liveTerminals.values()].map((d) => ({ ...d }));
+  log.child('term').debug(`persistTerminals: writing ${snapshot.length} terminal(s)`, {
+    names: snapshot.map((d) => d.name),
   });
-  terminalMemento.update(TERMINAL_STORE_KEY, [...liveTerminals.values()]).then(
-    () => {},
-    (err: unknown) => log.child('term').warn(`terminal persistence failed: ${String(err)}`),
-  );
+  const memento = terminalMemento;
+  lastPersist = persistQueue(async () => {
+    await memento.update(TERMINAL_STORE_KEY, snapshot);
+  }).catch((err: unknown) => {
+    log.child('term').warn(`terminal persistence failed: ${String(err)}`);
+  });
 }
 
 /** 记录一个应持久化的客户端终端（打开时调用）。 */
@@ -512,16 +539,39 @@ export function syncTrackedTerminalName(term: vscode.Terminal): void {
   if (!d) {
     return;
   }
+  if (syncName(d, term)) {
+    persistTerminals();
+  }
+}
+
+/**
+ * 轮询兜底：onDidChangeTerminalState 不一定在用户 rename 时触发
+ * （实测 renameWithArg/rename 只更新 Terminal.name，不派发该事件），
+ * 因此定时把 tracked 终端的当前显示名刷回描述。
+ */
+export function syncAllTrackedTerminalNames(): void {
+  let changed = false;
+  for (const [term, d] of liveTerminals) {
+    if (syncName(d, term)) {
+      changed = true;
+    }
+  }
+  if (changed) {
+    persistTerminals();
+  }
+}
+
+/** 单条同步：返回名字是否发生变化。 */
+function syncName(d: SavedClientTerminal, term: vscode.Terminal): boolean {
   if (!term.name) {
-    log.child('term').debug(`sync name: "${d.name}" -> (empty, ignored)`);
-    return;
+    return false;
   }
   if (d.name === term.name) {
-    return;
+    return false;
   }
   log.child('term').debug(`sync name: "${d.name}" -> "${term.name}"`);
   d.name = term.name;
-  persistTerminals();
+  return true;
 }
 
 /** 打开一个运行在客户端机器上的终端；不传 spec 时开客户端本机 shell。 */
