@@ -23,7 +23,8 @@ jobs:
       - name: Git status integration (fake ssh)
         run: node test/e2e-git.js
       - name: E2E (real VS Code, xvfb)
-        run: xvfb-run -a node test/e2e/runTest.js
+        # 统一走 npm script：xvfb 禁用 GLX 扩展，否则 Electron/Xvfb 在 Ubuntu runner 上 SIGSEGV
+        run: npm run test:e2e
       # 打包产物防回归（统一入口 scripts/package.mjs 内置验证：node-pty prebuilds、
       # 无 .pdb、ssh2 已 bundle 进 dist、vsix 大小）
       - name: Package + verify (unified entry)

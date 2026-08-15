@@ -24,6 +24,7 @@
 - vsix 裁剪约束：.vscodeignore 必须排除 node-pty 的 `*.pdb`（~20MB 调试符号）、`third_party`/`src`/`scripts`/`typings`/`node_modules`（编译期/源码）、`out/**`；**正常 vsix 应在 ~2MB 量级**——打包后若明显变大（>3MB），检查是否有新依赖/文件回退进包
 - `@types/*` 永远只在 devDependencies，vsce 不会打包
 - **涉及编译/打包/依赖/CI 的改动，必须同时审视 `.github/workflows/` 是否要同步**（CI 引用 npm scripts，一般改 scripts/ 即可自动同步，但要确认 yml 没有硬编码旧命令）；改 esbuild 入口/依赖布局后必须本地 `npm run package` 跑通并看产物验证输出
+- **CI/本地 e2e 必须走 `npm run test:e2e`，xvfb-run 必须带 `-s "-screen 0 1280x800x24 -ac -nolisten tcp -extension GLX"` 禁用 GLX**：Ubuntu runner 上 Xvfb 的 GLX 初始化会让 Electron SIGSEGV；改回裸 `xvfb-run -a node test/e2e/runTest.js` = CI e2e 崩溃
 
 ## SSH 传输层（src/ssh/sshSession.ts + remoteExec.ts）
 
