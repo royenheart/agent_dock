@@ -2,7 +2,7 @@ import { spawn, type ChildProcess } from 'node:child_process';
 import * as vscode from 'vscode';
 import type { PortForward, ServerConfig } from '../model';
 import { getServers } from '../config';
-import { execRemote, runSsh, sshDestination } from './remoteExec';
+import { execRemote, resolveSshCliTarget, runSsh, sshCliPortArgs } from './remoteExec';
 import { parseListeners, type ListeningService } from './listeners';
 import { log, tail } from '../log';
 
@@ -108,11 +108,13 @@ export async function startForward(server: ServerConfig, f: PortForward): Promis
     flog.warn(`probe failed on ${server.name}`, { code: probe.code, stderr: tail(probe.stderr) });
     throw new Error(`ssh to ${server.name} failed: ${probe.stderr.trim().slice(0, 200) || `exit ${probe.code}`}`);
   }
+  // host 命中 ssh config 别名时以当前配置为准，不用 servers 里旧缓存的端口
+  const cli = await resolveSshCliTarget(server);
   // 优先 -O forward：复用主连接下发转发，不新建进程，随 ControlPersist 存活。
   // Windows 的 Win32-OpenSSH 不支持 ControlMaster（buildSshBaseArgs 已去掉 ControlPath），
   // -O 必然报 "No ControlPath specified"，直接跳过，避免每次启动转发都打一条失败日志。
   if (process.platform !== 'win32') {
-    const res = await runSsh(server, ['-O', 'forward', '-L', spec, sshDestination(server)]);
+    const res = await runSsh(server, ['-O', 'forward', '-L', spec, cli.destination]);
     if (res.code === 0) {
       active.set(k, { mode: 'master' });
       persistActiveForwards();
@@ -124,10 +126,7 @@ export async function startForward(server: ServerConfig, f: PortForward): Promis
   }
   // 回退：独立 ssh -N 进程（如连接复用被禁用、Windows、或 OpenSSH < 6.7）
   const args = ['-o', 'BatchMode=yes', '-o', 'ConnectTimeout=8', '-N', '-T', '-o', 'ExitOnForwardFailure=yes', '-L', spec];
-  if (server.port) {
-    args.push('-p', String(server.port));
-  }
-  args.push(sshDestination(server));
+  args.push(...sshCliPortArgs(cli), cli.destination);
   flog.debug(`spawning dedicated forward process`, { argv: `ssh ${args.join(' ')}` });
   const child = spawn('ssh', args, { stdio: ['ignore', 'ignore', 'pipe'] });
   let stderr = '';
@@ -168,7 +167,8 @@ export async function stopForward(server: ServerConfig, f: PortForward): Promise
   if (cur.mode === 'process') {
     cur.child?.kill('SIGTERM');
   } else {
-    const res = await runSsh(server, ['-O', 'cancel', '-L', forwardSpec(f), sshDestination(server)]);
+    const cli = await resolveSshCliTarget(server);
+    const res = await runSsh(server, ['-O', 'cancel', '-L', forwardSpec(f), cli.destination]);
     if (res.code !== 0) {
       flog.warn(`-O cancel failed on ${server.name}`, { code: res.code, stderr: tail(res.stderr) });
     }

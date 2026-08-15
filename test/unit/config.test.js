@@ -3,7 +3,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
-const { readSshConfigHosts, resolveSshHostOptions } = require('../../out/ssh/sshConfig');
+const { readSshConfigHosts, resolveServerConnection, resolveSshHostOptions } = require('../../out/ssh/sshConfig');
 const { gatherSettings } = require('../../out/views/settingsData');
 
 function tmpHome() {
@@ -110,6 +110,29 @@ test('resolveSshHostOptions: unknown alias falls back to alias hostname and defa
     `${home}/.ssh/id_ecdsa`,
     `${home}/.ssh/id_dsa`,
   ]);
+});
+
+test('resolveServerConnection: ssh config alias wins over stale cached user/port in settings', async () => {
+  const home = tmpHome();
+  fs.mkdirSync(path.join(home, '.ssh'), { recursive: true });
+  fs.writeFileSync(path.join(home, '.ssh', 'config'), 'Host jump\n  HostName jump.internal\n  User alice\n  Port 2222\n');
+  // settings 里存的是旧快照（早期版本会从 ssh config 拷贝 user/port）
+  const r = await resolveServerConnection({ host: 'jump', user: 'old-user', port: 9999 }, home);
+  assert.equal(r.configured, true);
+  assert.equal(r.hostName, 'jump.internal');
+  assert.equal(r.user, 'alice');
+  assert.equal(r.port, 2222);
+});
+
+test('resolveServerConnection: non-alias hosts keep explicit settings user/port', async () => {
+  const home = tmpHome();
+  fs.mkdirSync(path.join(home, '.ssh'), { recursive: true });
+  fs.writeFileSync(path.join(home, '.ssh', 'config'), 'Host other\n  User alice\n');
+  const r = await resolveServerConnection({ host: '10.0.0.9', user: 'root', port: 2200 }, home);
+  assert.equal(r.configured, false);
+  assert.equal(r.hostName, '10.0.0.9');
+  assert.equal(r.user, 'root');
+  assert.equal(r.port, 2200);
 });
 
 test('resolveSshHostOptions: host matching is case-insensitive', async () => {

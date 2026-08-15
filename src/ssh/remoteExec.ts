@@ -2,6 +2,7 @@ import { spawn } from 'node:child_process';
 import type { ServerConfig } from '../model';
 import { getSshConnectionPersist, getSshHostKeyMode, getSshTransport } from '../config';
 import { buildSshBaseArgs, shq } from './sshArgs';
+import { resolveServerConnection } from './sshConfig';
 import { Semaphore } from './semaphore';
 import { sessionFor } from './sshSession';
 import { log, tail } from '../log';
@@ -147,6 +148,31 @@ export function sshDestination(server: ServerConfig): string {
   return `${server.user ? `${server.user}@` : ''}${server.host}`;
 }
 
+export interface SshCliTarget {
+  /** 传给 ssh 的目标（配置别名场景只传别名，让 ssh 自己读当前配置）。 */
+  destination: string;
+  /** servers 里填的 host（别名或主机名）。 */
+  host: string;
+  /** 仅当 host 不是 ssh config 别名时才显式传 -p；别名端口以当前 ssh config 为准。 */
+  port?: number;
+  configured: boolean;
+}
+
+/** 构造 spawn `ssh` 进程用的目标参数（异步解析 ~/.ssh/config，避免用 settings 里的旧端口）。 */
+export async function resolveSshCliTarget(server: ServerConfig): Promise<SshCliTarget> {
+  const resolved = await resolveServerConnection(server);
+  return {
+    destination: resolved.configured ? server.host : `${resolved.user ? `${resolved.user}@` : ''}${server.host}`,
+    host: server.host,
+    port: resolved.configured ? undefined : resolved.port,
+    configured: resolved.configured,
+  };
+}
+
+export function sshCliPortArgs(target: SshCliTarget): string[] {
+  return target.port ? ['-p', String(target.port)] : [];
+}
+
 let muxDisabledLogged = false;
 
 function sshBaseArgs(): string[] {
@@ -204,12 +230,10 @@ export async function execRemote(
       slog.warn(`#persistent ✗ ${sshDestination(server)} fallback to spawn: ${String((err as Error)?.message ?? err)}`);
     }
   }
+  const target = await resolveSshCliTarget(server);
   const args = sshBaseArgs();
-  if (server.port) {
-    args.push('-p', String(server.port));
-  }
-  args.push(sshDestination(server), 'bash', '-s');
-  const dest = sshDestination(server);
+  args.push(...sshCliPortArgs(target), target.destination, 'bash', '-s');
+  const dest = target.destination;
   const id = ++callSeq;
   const enqueued = Date.now();
   const acquired = await sshSemaphore.acquire(opts?.signal);
@@ -255,28 +279,27 @@ export async function execRemoteBuffer(
       slog.warn(`#persistent ✗ ${sshDestination(server)} fallback to spawn: ${String((err as Error)?.message ?? err)}`);
     }
   }
+  const target = await resolveSshCliTarget(server);
   const args = sshBaseArgs();
-  if (server.port) {
-    args.push('-p', String(server.port));
-  }
-  args.push(sshDestination(server), 'bash', '-s');
+  args.push(...sshCliPortArgs(target), target.destination, 'bash', '-s');
+  const dest = target.destination;
   const id = ++callSeq;
   const enqueued = Date.now();
   const acquired = await sshSemaphore.acquire(opts?.signal);
   if (!acquired || opts?.signal?.aborted) {
-    slog.debug(`#${id} ✗ ${sshDestination(server)} cancelled before spawn`);
+    slog.debug(`#${id} ✗ ${dest} cancelled before spawn`);
     return { stdout: Buffer.alloc(0), stderr: '', code: -1, timedOut: false, cancelled: true };
   }
   const started = Date.now();
   try {
     if (!opts?.quiet) {
-      slog.debug(`#${id} → ${sshDestination(server)} ← ${scriptSummary(script)} (binary)`, { queueMs: started - enqueued || undefined });
+      slog.debug(`#${id} → ${dest} ← ${scriptSummary(script)} (binary)`, { queueMs: started - enqueued || undefined });
     }
-    const res = await spawnCollect('ssh', args, script, timeoutMs, opts?.signal, opts?.maxOutputBytes).catch((e) => logSpawnError(id, sshDestination(server), e));
+    const res = await spawnCollect('ssh', args, script, timeoutMs, opts?.signal, opts?.maxOutputBytes).catch((e) => logSpawnError(id, dest, e));
     if (!opts?.quiet) {
-      logResult(id, sshDestination(server), res, Date.now() - started);
+      logResult(id, dest, res, Date.now() - started);
     } else if (res.cancelled || res.timedOut || res.code !== 0) {
-      logResult(id, sshDestination(server), res, Date.now() - started);
+      logResult(id, dest, res, Date.now() - started);
     }
     return res;
   } finally {
@@ -286,11 +309,11 @@ export async function execRemoteBuffer(
 
 /** Run ssh with raw trailing args (e.g. `-O forward` control commands); unlike execRemote nothing is piped to bash. */
 export async function runSsh(server: ServerConfig, extraArgs: string[], timeoutMs = 15_000): Promise<ExecResult> {
+  const target = await resolveSshCliTarget(server);
   const args = sshBaseArgs();
-  if (server.port) {
-    args.push('-p', String(server.port));
-  }
+  args.push(...sshCliPortArgs(target));
   args.push(...extraArgs);
+  const dest = target.destination;
   const id = ++callSeq;
   const started = Date.now();
   // 与其他远端调用共用全局并发上限，避免轮询/扫描占满时叠加出额外 ssh 进程
@@ -299,9 +322,9 @@ export async function runSsh(server: ServerConfig, extraArgs: string[], timeoutM
     return { stdout: '', stderr: '', code: -1, timedOut: false, cancelled: true };
   }
   try {
-    slog.debug(`#${id} → ${sshDestination(server)} (raw)`, { argv: `ssh ${args.join(' ')}` });
-    const res = await spawnCollect('ssh', args, undefined, timeoutMs).catch((e) => logSpawnError(id, sshDestination(server), e));
-    logResult(id, sshDestination(server), res, Date.now() - started);
+    slog.debug(`#${id} → ${dest} (raw)`, { argv: `ssh ${args.join(' ')}` });
+    const res = await spawnCollect('ssh', args, undefined, timeoutMs).catch((e) => logSpawnError(id, dest, e));
+    logResult(id, dest, res, Date.now() - started);
     return { ...res, stdout: res.stdout.toString('utf8') };
   } finally {
     sshSemaphore.release();

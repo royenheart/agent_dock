@@ -17,13 +17,13 @@ import {
 import { resumeCommand } from './agents/resume';
 import { buildDiscoveryScript } from './agents/discoveryScript';
 import { parseDiscoveryOutput } from './agents/parse';
-import { execRemote, sshDestination, shq } from './ssh/remoteExec';
+import { execRemote, resolveSshCliTarget, sshDestination, shq } from './ssh/remoteExec';
 import { joinRemotePath } from './ssh/remoteFsParse';
 import { currentFileUri, currentHomeDir, currentNeedsSsh, currentServerConfig } from './ssh/currentExec';
 import { openClientTerminal, sshSpawnSpec } from './ssh/clientTerminal';
 import { trackNativeTerminal } from './ssh/nativeTerminal';
 import { forwardSpec, setOnDidChange, startForward, stopForward } from './ssh/portForward';
-import { readSshConfigHosts, type SshHostEntry } from './ssh/sshConfig';
+import { readSshConfigHosts, resolveServerConnection, type SshHostEntry } from './ssh/sshConfig';
 import { normPath, pathBasename, uriFsPath } from './paths';
 import { pickDirectory } from './views/dirPicker';
 import { copyCurrentToLocal, copyLocalToRemote, copyRemoteToLocal, copyUriRecursive, downloadRemoteToUri, localListSubdirs, localMove, pickLocalMoveTarget, pickRemoteMoveTarget, remoteListSubdirs, remoteMove, remoteParentPath } from './tree/moveOps';
@@ -69,6 +69,14 @@ const AGENT_CLI: Record<'opencode' | 'codex' | 'claude', { cmd: string; hint: st
   claude: { cmd: 'claude', hint: 'claude 新会话' },
 };
 
+/** 客户端 ssh CLI 用的 server 视图：host 是别名时清掉 settings 里旧缓存的 user/port，交给 ssh 读当前配置。 */
+async function sshCliServer(server: ServerConfig): Promise<ServerConfig> {
+  const resolved = await resolveServerConnection(server);
+  return resolved.configured
+    ? { ...server, user: undefined, port: undefined }
+    : { ...server, user: resolved.user, port: resolved.port };
+}
+
 function sessionTarget(node: SessionNode): SessionTarget | undefined {
   const servers = getServers();
   const server = node.serverKey === CURRENT_SERVER_KEY ? undefined : servers.find((s) => s.name === node.serverKey);
@@ -81,23 +89,24 @@ function sessionTarget(node: SessionNode): SessionTarget | undefined {
   return { serverKey: node.serverKey, server, serverLabel, session: node.session };
 }
 
-export function resumeInTerminal(target: SessionTarget): void {
+export async function resumeInTerminal(target: SessionTarget): Promise<void> {
   const { session, server } = target;
   const cmd = resumeCommand(session);
   const name = `${session.agent}: ${session.title.slice(0, 20)}`;
   const full = session.cwd ? `cd ${shq(session.cwd)} && ${cmd}` : cmd;
   if (server) {
+    const cliServer = await sshCliServer(server);
     if (currentNeedsSsh()) {
       openClientTerminal({
         name,
-        spec: sshSpawnSpec(server, full),
+        spec: sshSpawnSpec(cliServer, full),
         persist: { name, kind: 'ssh', serverName: server.name, remoteCommand: full },
       });
       return;
     }
-    const port = server.port ? `-p ${server.port} ` : '';
+    const port = cliServer.port ? `-p ${cliServer.port} ` : '';
     const term = vscode.window.createTerminal({ name });
-    term.sendText(`ssh -t ${port}${sshDestination(server)} ${shq(full)}`);
+    term.sendText(`ssh -t ${port}${sshDestination(cliServer)} ${shq(full)}`);
     term.show();
     return;
   }
@@ -117,7 +126,9 @@ async function connectToServer(server: ServerConfig): Promise<void> {
   } catch {
     home = '/';
   }
-  const authority = `ssh-remote+${server.user ? `${server.user}@` : ''}${server.host}${server.port ? `:${server.port}` : ''}`;
+  // ssh config 别名交给 Remote-SSH 自己解析（HostName/User/Port 以客户端当前配置为准）
+  const cli = await resolveSshCliTarget(server);
+  const authority = `ssh-remote+${cli.destination}${cli.port ? `:${cli.port}` : ''}`;
   // 已 pin 目录时在远端生成 .code-workspace 并整体打开，让原生资源管理器与 AW 的目录集合一致
   let openPath = server.folders?.[0] ?? home;
   if (server.folders && server.folders.length > 0) {
@@ -243,15 +254,15 @@ function uniqueServerName(base: string): string {
 }
 
 async function ensureServerSaved(entry: SshHostEntry): Promise<ServerConfig> {
-  const existing = getServers().find((s) => s.host === entry.host && s.user === entry.user);
+  const existing = getServers().find((s) => s.host.toLowerCase() === entry.host.toLowerCase());
   if (existing) {
     return existing;
   }
+  // 只持久化 ssh config 的 Host 别名：user/port 每次连接时从“当前” ssh config 解析，
+  // 否则用户改 ssh config 的 HostName/Port 后，settings 里的旧值会一直覆盖新配置。
   const server: ServerConfig = {
     name: uniqueServerName(entry.host),
     host: entry.host,
-    user: entry.user,
-    port: entry.port,
     folders: [],
   };
   await addServer(server);
@@ -425,21 +436,22 @@ export function registerCommands(context: vscode.ExtensionContext, provider: Wor
     }
   });
 
-  reg('agentDock.connectTerminal', (node: ServerNode) => {
+  reg('agentDock.connectTerminal', async (node: ServerNode) => {
     if (!node?.server) {
       return;
     }
+    const cliServer = await sshCliServer(node.server);
     if (currentNeedsSsh()) {
       openClientTerminal({
         name: `ssh: ${node.server.name}`,
-        spec: sshSpawnSpec(node.server),
+        spec: sshSpawnSpec(cliServer),
         persist: { name: `ssh: ${node.server.name}`, kind: 'ssh', serverName: node.server.name },
       });
       return;
     }
     const term = vscode.window.createTerminal({ name: `ssh: ${node.server.name}` });
-    const port = node.server.port ? `-p ${node.server.port} ` : '';
-    term.sendText(`ssh ${port}${sshDestination(node.server)}`);
+    const port = cliServer.port ? `-p ${cliServer.port} ` : '';
+    term.sendText(`ssh ${port}${sshDestination(cliServer)}`);
     term.show();
   });
 
@@ -462,10 +474,10 @@ export function registerCommands(context: vscode.ExtensionContext, provider: Wor
     }
   });
 
-  reg('agentDock.resumeSession', (node: SessionNode) => {
+  reg('agentDock.resumeSession', async (node: SessionNode) => {
     const target = node ? sessionTarget(node) : undefined;
     if (target) {
-      resumeInTerminal(target);
+      await resumeInTerminal(target);
     }
   });
 
@@ -718,17 +730,18 @@ export function registerCommands(context: vscode.ExtensionContext, provider: Wor
         return;
       }
       const name = `new: ${picked} · ${pathBasename(node.path)}`;
+      const cliServer = await sshCliServer(server);
       if (currentNeedsSsh()) {
         openClientTerminal({
           name,
-          spec: sshSpawnSpec(server, `cd ${shq(node.path)} && ${cli}`),
+          spec: sshSpawnSpec(cliServer, `cd ${shq(node.path)} && ${cli}`),
           persist: { name, kind: 'ssh', serverName: server.name, remoteCommand: `cd ${shq(node.path)} && ${cli}` },
         });
         return;
       }
-      const port = server.port ? `-p ${server.port} ` : '';
+      const port = cliServer.port ? `-p ${cliServer.port} ` : '';
       const term = vscode.window.createTerminal({ name });
-      term.sendText(`ssh -t ${port}${sshDestination(server)} ${shq(`cd ${shq(node.path)} && ${cli}`)}`);
+      term.sendText(`ssh -t ${port}${sshDestination(cliServer)} ${shq(`cd ${shq(node.path)} && ${cli}`)}`);
       term.show();
     } else {
       const cwd = node.workspaceUri ? uriFsPath(node.workspaceUri) : node.path;
@@ -1165,7 +1178,7 @@ export function registerCommands(context: vscode.ExtensionContext, provider: Wor
   });
 
   /** 在远程目录打开客户端 ssh 终端。 */
-  reg('agentDock.remoteFsOpenTerminal', (node: RemoteFsEntryNode | FolderNode) => {
+  reg('agentDock.remoteFsOpenTerminal', async (node: RemoteFsEntryNode | FolderNode) => {
     const target = remoteDirTarget(node);
     if (!target) {
       return;
@@ -1177,6 +1190,7 @@ export function registerCommands(context: vscode.ExtensionContext, provider: Wor
     }
     const name = `ssh: ${server.name} · ${target.name}`;
     const remoteCommand = `cd ${shq(target.path)} && exec "$SHELL" -l`;
-    openClientTerminal({ name, spec: sshSpawnSpec(server, remoteCommand), persist: { name, kind: 'ssh', serverName: server.name, remoteCommand } });
+    const cliServer = await sshCliServer(server);
+    openClientTerminal({ name, spec: sshSpawnSpec(cliServer, remoteCommand), persist: { name, kind: 'ssh', serverName: server.name, remoteCommand } });
   });
 }

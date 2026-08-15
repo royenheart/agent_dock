@@ -136,6 +136,8 @@ export interface ResolvedSshHost {
   port?: number;
   /** 按序排列的 IdentityFile（含默认私钥兜底）。 */
   identityFiles: string[];
+  /** 是否命中 ~/.ssh/config 的 Host 别名（命中时以配置文件为权威，忽略 servers 里旧缓存的 user/port）。 */
+  configured: boolean;
 }
 
 /**
@@ -159,5 +161,30 @@ export async function resolveSshHostOptions(alias: string, homeDir?: string): Pr
     user: match?.user,
     port: match?.port,
     identityFiles,
+    configured: !!match,
+  };
+}
+
+/**
+ * 解析 servers 配置项的实际连接参数。
+ *
+ * 背景：早期版本把从 ~/.ssh/config 解析出的 user/port 一并写进 agentDock.servers，
+ * 用户随后修改 ssh config（如换端口）时，settings 里的旧值会把新配置覆盖掉。
+ * 因此这里约定：host 命中 ssh config 的 Host 别名时，以“当前” ssh config 为准，
+ * 忽略 servers 里缓存的 user/port；只有 host 不是别名（直接填 IP/主机名）时，
+ * servers 里的 user/port 才作为命令行/ssh2 的显式参数生效。
+ */
+export async function resolveServerConnection(
+  server: { host: string; user?: string; port?: number },
+  homeDir?: string,
+): Promise<ResolvedSshHost> {
+  const resolved = await resolveSshHostOptions(server.host, homeDir);
+  if (resolved.configured) {
+    return resolved;
+  }
+  return {
+    ...resolved,
+    user: server.user ?? resolved.user,
+    port: server.port ?? resolved.port,
   };
 }

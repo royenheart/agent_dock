@@ -9,7 +9,7 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 import { Client, SFTPWrapper, type ConnectConfig } from 'ssh2';
 import type { ServerConfig } from '../model';
-import { resolveSshHostOptions, type ResolvedSshHost } from './sshConfig';
+import { resolveServerConnection, type ResolvedSshHost } from './sshConfig';
 import { buildHostKeyVerifier, type HostKeyMode } from './knownHosts';
 import { Semaphore } from './semaphore';
 import { log } from '../log';
@@ -134,7 +134,8 @@ export class SshSession {
 
   private async connect(): Promise<void> {
     const home = os.homedir();
-    const resolved = await resolveSshHostOptions(this.server.host, home);
+    // host 命中 ssh config 别名时以其当前值为准；servers 里旧缓存的 user/port 不再覆盖
+    const resolved = await resolveServerConnection(this.server, home);
     const identityFiles = this.opts.identityFiles ?? resolved.identityFiles;
     const candidates = await this.authCandidates(identityFiles);
     if (candidates.length === 0) {
@@ -162,7 +163,7 @@ export class SshSession {
         client.on('error', () => {
           this.ready = false;
         });
-        log.child('ssh').debug(`persistent session ready: ${this.server.name} (${resolved.hostName}:${this.server.port ?? resolved.port ?? 22})`);
+        log.child('ssh').debug(`persistent session ready: ${this.server.name} (${resolved.hostName}:${resolved.port ?? 22})`);
         return;
       } catch (err) {
         lastErr = err;
@@ -214,7 +215,7 @@ export class SshSession {
     // known_hosts 匹配候选：非默认端口时 OpenSSH 记录为 `[host]:port` 形式
     // （哈希条目同样以 `[host]:port` 为输入），必须把带端口形式一并作为候选，
     // 否则 22 之外端口的服务器永远 Host denied。
-    const port = this.server.port ?? resolved.port ?? 22;
+    const port = resolved.port ?? 22;
     const hostnames: string[] = [];
     const addHost = (h: string | undefined): void => {
       if (!h || hostnames.includes(h)) {
@@ -236,7 +237,7 @@ export class SshSession {
     const cfg: ConnectConfig = {
       host: resolved.hostName,
       port,
-      username: this.server.user ?? resolved.user ?? os.userInfo().username,
+      username: resolved.user ?? os.userInfo().username,
       readyTimeout: this.opts.readyTimeoutMs ?? 10_000,
       keepaliveInterval: this.opts.keepaliveIntervalMs ?? 15_000,
       hostVerifier: buildHostKeyVerifier(knownHostsFiles, hostnames, mode),
