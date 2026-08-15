@@ -1,3 +1,9 @@
+## v0.2.7 (2026-08-15)
+
+### Fix
+
+- release ver and current connected server
+
 ## v0.2.6 (2026-08-14)
 
 ### Feat
