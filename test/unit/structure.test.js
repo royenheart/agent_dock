@@ -55,6 +55,7 @@ test('groupByCwd: groups and sorts by latest update', () => {
 test('uriFsPath: vscode-remote uses posix path (Windows backslash regression guard)', () => {
   // Windows 客户端上 vscode-remote URI 的 fsPath 是 \home\x 反斜杠形式
   assert.equal(uriFsPath({ scheme: 'vscode-remote', path: '/home/u/proj', fsPath: '\\home\\u\\proj' }), '/home/u/proj');
+  assert.equal(uriFsPath({ scheme: 'vscode-remote', path: '/mnt/xxxx', fsPath: '\\mnt\\xxxx' }), '/mnt/xxxx');
   assert.equal(uriFsPath({ scheme: 'file', path: '/c/Users/u', fsPath: 'c:\\Users\\u' }), 'c:\\Users\\u');
   assert.equal(uriFsPath({ scheme: 'file', path: '/home/u', fsPath: '/home/u' }), '/home/u');
 });

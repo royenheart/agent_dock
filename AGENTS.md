@@ -49,6 +49,7 @@
 - node-pty 的 Windows 实现不自动补 `.exe`：spawn 的 `file` 在 win32 必须传 `ssh.exe`（不是 `ssh`），否则 "File not found: "（空路径）且终端永远退回管道模式
 - 用户 rename 终端后必须同步名字：`syncTrackedTerminalName` 挂在 `onDidChangeTerminalState`，否则 reload 后还原成创建时名字；删掉它 = 名字回退
 - 原生终端（`fsOpenTerminal` 的 `createTerminal({cwd})`）由 VSCode persistent sessions 恢复终端本身，需显式传 `name`（按 cwd 目录名）。但**名字恢复靠 `nativeTerminal.ts` 自己跟踪**（persist `{creationName, cwd, name}` + `onDidChangeTerminalState` 同步 rename）：VSCode 只在 reload 重连时恢复用户 rename 的标题，完全重启走 process revive 名字回落创建名，且没有公开 rename API（只有内部命令 `renameWithArg`，作用于活跃终端）——按 `creationOptions` 的 name+cwd 匹配并回放保存的名字（activate 全量扫一轮 + `onDidOpenTerminal` 补迟到终端，二者缺一不可）；删掉这套 = 重启后名字回退
+- **当前服务器节点的终端 cwd 必须走 `uriFsPath()`（src/paths.ts），严禁直接传 `vscode-remote` URI 的 `fsPath`**：Windows 客户端上 `vscode-remote:` 的 `fsPath` 是反斜杠形态（`/mnt/xxx` → `\mnt\xxx`），`createTerminal({cwd})` 会把它原样交给 Linux pty host，终端报 "Starting directory ... does not exist"（`fsOpenTerminal`/`createSession` 当前服务器分支与 `nativeTerminal.ts` 持久化键必须用同一个 cwd 字符串；`uriFsPath` 对 `vscode-remote` 返回 POSIX `uri.path`、对 `file` 返回 `fsPath`）。回归单测见 `test/unit/structure.test.js` 的 uriFsPath backslash guard，改回 `fsPath` = 回退
 
 ## 激活与恢复（package.json + extension.ts 必须同步）
 

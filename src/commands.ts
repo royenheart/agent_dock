@@ -684,10 +684,13 @@ export function registerCommands(context: vscode.ExtensionContext, provider: Wor
   reg('agentDock.fsOpenTerminal', (node: FsEntryNode | FolderNode) => {
     const dir = targetDirUri(node);
     if (dir) {
+      // vscode-remote URI 在 Windows 客户端上的 fsPath 是反斜杠形式（\mnt\xxx），
+      // 作为远程终端 cwd 会被原样送给 Linux pty host 而打不开——这里取 posix path。
+      const cwd = uriFsPath(dir);
       // 原生终端（TerminalOptions）：VSCode persistent sessions 恢复终端本身，但 process revive
       // （完全重启）时名字回落到创建名——交由 trackNativeTerminal 记录并在 reload 后重放名字
-      const term = vscode.window.createTerminal({ name: pathBasename(dir.fsPath) || dir.fsPath, cwd: dir.fsPath });
-      trackNativeTerminal(term, dir.fsPath);
+      const term = vscode.window.createTerminal({ name: pathBasename(cwd) || cwd, cwd });
+      trackNativeTerminal(term, cwd);
       term.show();
     }
   });
@@ -728,7 +731,7 @@ export function registerCommands(context: vscode.ExtensionContext, provider: Wor
       term.sendText(`ssh -t ${port}${sshDestination(server)} ${shq(`cd ${shq(node.path)} && ${cli}`)}`);
       term.show();
     } else {
-      const cwd = node.workspaceUri?.fsPath ?? node.path;
+      const cwd = node.workspaceUri ? uriFsPath(node.workspaceUri) : node.path;
       const term = vscode.window.createTerminal({ name: `new: ${picked} · ${node.label}`, cwd });
       term.sendText(cli);
       term.show();

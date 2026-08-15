@@ -28,6 +28,9 @@ jobs:
         with:
           files: '*.vsix'
           generate_release_notes: true
+          # 按语义版本比较：仅当新 tag 版本号更高时才设为 Latest，
+          # 避免并发发布时低版本 release 抢走 Latest 徽标
+          make_latest: 'legacy'
 
       # Marketplace 发布暂时关闭：手动上传 vsix 到
       # https://marketplace.visualstudio.com/manage （More Actions → 上传/更新扩展）

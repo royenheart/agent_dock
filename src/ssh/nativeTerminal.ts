@@ -14,7 +14,7 @@ import { log } from '../log';
 export interface SavedNativeTerminal {
   /** 创建时的名字（reload 后用它匹配 creationOptions.name，不受用户 rename 影响）。 */
   creationName: string;
-  /** 创建时的 cwd（fsPath），与 creationName 一起做匹配键。 */
+  /** 创建时的 cwd（与 creationOptions.cwd 字符串一致；vscode-remote 为 posix 路径），与 creationName 一起做匹配键。 */
   cwd: string;
   /** 当前显示名：用户 rename 后经 onDidChangeTerminalState 同步进来。 */
   name: string;
