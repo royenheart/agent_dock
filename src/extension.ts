@@ -22,6 +22,8 @@ import { remoteGitStore } from './git/remoteGit';
 import { t } from './i18n';
 import { log } from './log';
 
+let expansionStateForShutdown: ExpansionState | undefined;
+
 export interface AgentDockApi {
   provider: WorkspaceProvider;
   decorations: SessionDecorationProvider;
@@ -75,7 +77,13 @@ export function activate(context: vscode.ExtensionContext): AgentDockApi {
   // 需自行记录并在 reload/刷新后 reveal 恢复。
   const expansionState = new ExpansionState();
   expansionState.init(context.workspaceState);
-  const onExpand = (e: vscode.TreeViewExpansionEvent<Node>): void => expansionState.onExpand(e.element);
+  expansionStateForShutdown = expansionState;
+  const onExpand = (e: vscode.TreeViewExpansionEvent<Node>): void => {
+    expansionState.onExpand(e.element);
+    // 新展开的父节点可能带有已保存但此前被“祖先未展开”过滤掉的子节点：重排一轮恢复它们
+    expansionState.onTreeChanged();
+    scheduleRestore(300);
+  };
   // 树刷新（含全量重绘）后界面展开被清空，需按持久化集合重放。
   // 懒加载树首次渲染/扫描可能耗时数秒，reveal 需等父链就绪：restore 返回还有 pending
   // 时（上轮有节点因未就绪失败）自动再排一轮，防抖 1.5s 等扫描/加载完成。
@@ -200,10 +208,14 @@ export function activate(context: vscode.ExtensionContext): AgentDockApi {
   return { provider, decorations, expansion: expansionState, workspaceState: context.workspaceState, treeView: tree };
 }
 
-export function deactivate(): void {
-  // reload 的销毁序列会向扩展派发终端 close 事件；标记后两套终端持久化都不再删记录/落盘
+export function deactivate(): Promise<void> {
+  // reload 的销毁序列会向扩展派发终端 close/树展开折叠等事件；标记后持久化逻辑不再删记录/落盘
   markClientTerminalsShuttingDown();
   markNativeTerminalsShuttingDown();
+  expansionStateForShutdown?.markShuttingDown();
   // 关闭所有持久 SSH 会话（SFTP/exec 通道所在的长连接）
-  void disposeSshSessions();
+  const sessions = disposeSshSessions();
+  return expansionStateForShutdown
+    ? expansionStateForShutdown.flush().then(() => sessions)
+    : sessions;
 }

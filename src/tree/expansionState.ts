@@ -1,5 +1,6 @@
 import * as vscode from 'vscode';
-import { nodeFromId, nodeId, type Node } from './workspaceProvider';
+import { nodeFromId, nodeId, nodeParent, type Node } from './workspaceProvider';
+import { createSerialQueue } from '../batch';
 import { log } from '../log';
 
 /**
@@ -30,6 +31,11 @@ export class ExpansionState {
   private attempt = 0;
   /** 每个 id 的连续失败轮数；成功清零，达到上限放弃后清零（onTreeChanged 重排时给全新预算）。 */
   private readonly failures = new Map<string, number>();
+  /** 持久化写入串行化：memento.update 完成顺序与调用顺序一致，reload 前最后一次折叠不会被子节点/祖先的旧写入覆盖。 */
+  private readonly persistQueue = createSerialQueue();
+  private lastPersist: Promise<void> = Promise.resolve();
+  /** deactivate 后忽略 VSCode 在树销毁阶段补发的 expand/collapse 事件，避免它们把已保存的状态改坏。 */
+  private shuttingDown = false;
 
   init(memento: vscode.Memento): void {
     this.memento = memento;
@@ -49,6 +55,9 @@ export class ExpansionState {
 
   /** 用户在界面上展开了某节点。 */
   onExpand(node: Node): void {
+    if (this.shuttingDown) {
+      return;
+    }
     const id = nodeId(node);
     if (!this.expanded.has(id)) {
       this.expanded.add(id);
@@ -56,14 +65,78 @@ export class ExpansionState {
     }
   }
 
-  /** 用户折叠了某节点（含其子节点隐含折叠，但只记录本节点）。 */
+  /**
+   * 用户在界面上折叠了某节点。
+   * 除本节点外，已记录的后代展开态也一并删除：折叠父节点后子树不可见，
+   * reload 时若仍按后代 id 去 reveal，VSCode 会隐式把父节点重新展开。
+   */
   onCollapse(node: Node): void {
-    const id = nodeId(node);
-    if (this.expanded.delete(id)) {
-      this.pending.delete(id);
-      this.failures.delete(id);
-      this.persist();
+    if (this.shuttingDown) {
+      return;
     }
+    const id = nodeId(node);
+    const removed: string[] = [];
+    if (this.expanded.delete(id)) {
+      removed.push(id);
+    }
+    for (const other of this.expanded) {
+      if (this.isDescendantOf(other, id)) {
+        this.expanded.delete(other);
+        removed.push(other);
+      }
+    }
+    if (removed.length === 0) {
+      return;
+    }
+    for (const removedId of removed) {
+      this.pending.delete(removedId);
+      this.failures.delete(removedId);
+    }
+    this.persist();
+  }
+
+  /** id 是否是 ancestorId 的后代（沿 nodeParent 链上溯）。 */
+  private isDescendantOf(id: string, ancestorId: string): boolean {
+    let cur = nodeFromId(id);
+    for (let depth = 0; cur && depth < 64; depth++) {
+      const parent = nodeParent(cur);
+      if (!parent) {
+        return false;
+      }
+      if (nodeId(parent) === ancestorId) {
+        return true;
+      }
+      cur = parent;
+    }
+    return false;
+  }
+
+  /** 该 id 的所有祖先是否都处于展开状态（server 根节点默认展开，直接放行）。 */
+  private isRevealable(id: string): boolean {
+    let cur = nodeFromId(id);
+    for (let depth = 0; cur && depth < 64; depth++) {
+      const parent = nodeParent(cur);
+      if (!parent) {
+        return true;
+      }
+      if (parent.kind === 'server') {
+        return true;
+      }
+      if (!this.expanded.has(nodeId(parent))) {
+        return false;
+      }
+      cur = parent;
+    }
+    return false;
+  }
+
+  markShuttingDown(): void {
+    this.shuttingDown = true;
+  }
+
+  /** 等待已入队的持久化写入完成（deactivate 时调用，避免 reload 读取旧快照）。 */
+  async flush(): Promise<void> {
+    await this.lastPersist;
   }
 
   /**
@@ -88,16 +161,33 @@ export class ExpansionState {
     const tlog = log.child('tree');
     tlog.debug(`restore round ${this.attempt}: pending=${this.pending.size}`);
 
-    // 按深度排序：浅层优先（server=0 < folder=1 < fsEntry/remoteFsEntry=2 < ...）
+    // 按真实祖先链深度排序：先 reveal 父节点（server < folder < 子目录 < 孙节点…），
+    // 同一种类下的父子顺序也稳定，避免 reveal 子节点时父链尚未在 VSCode 缓存里就绪。
     const depthOf = (id: string): number => {
-      const kind = id.split(':')[0];
-      return kind === 'server' ? 0 : kind === 'folder' ? 1 : kind === 'sessionsRoot' || kind === 'otherSessions' || kind === 'portsRoot' ? 2 : 3;
+      let depth = 0;
+      let cur = nodeFromId(id);
+      for (let guard = 0; cur && guard < 64; guard++) {
+        const parent = nodeParent(cur);
+        if (!parent) {
+          break;
+        }
+        depth++;
+        cur = parent;
+      }
+      return depth;
     };
     const ordered = [...this.pending].sort((a, b) => depthOf(a) - depthOf(b));
     this.pending.clear();
+    // 只 reveal 祖先链完整展开的节点：若某个父节点已被用户折叠，恢复其后代会把父节点
+    // 隐式重新展开（并触发 onDidExpandElement 把父节点写回持久化状态），这正是
+    // “折叠 A 再 reload，A 又打开了”的来源之一。
+    const revealable = ordered.filter((id) => this.isRevealable(id));
+    if (revealable.length === 0) {
+      return false;
+    }
 
     const givenUp: string[] = [];
-    for (const id of ordered) {
+    for (const id of revealable) {
       const node = nodeFromId(id);
       if (!node) {
         tlog.debug(`restore skip ${id}: cannot reconstruct node`);
@@ -138,9 +228,10 @@ export class ExpansionState {
     return false;
   }
 
-  /** 树刷新（onDidChangeTreeData）后调用：重置重试计数，返回是否需要恢复。 */
+  /** 树刷新（onDidChangeTreeData）/用户重新展开父节点后调用：重置重试预算，返回是否需要恢复。 */
   onTreeChanged(): boolean {
     this.attempt = 0;
+    this.failures.clear();
     return this.expanded.size > 0;
   }
 
@@ -148,9 +239,12 @@ export class ExpansionState {
     if (!this.memento) {
       return;
     }
-    this.memento.update(STORE_KEY, [...this.expanded]).then(
-      () => {},
-      (err: unknown) => log.child('tree').warn(`expanded-state persist failed: ${String(err)}`),
-    );
+    const snapshot = [...this.expanded];
+    const memento = this.memento;
+    this.lastPersist = this.persistQueue(async () => {
+      await memento.update(STORE_KEY, snapshot);
+    }).catch((err: unknown) => {
+      log.child('tree').warn(`expanded-state persist failed: ${String(err)}`);
+    });
   }
 }

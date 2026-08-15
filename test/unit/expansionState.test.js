@@ -11,6 +11,7 @@ Module._resolveFilename = function (request, ...args) {
   return origResolve.call(this, request, ...args);
 };
 const { ExpansionState } = require('../../out/tree/expansionState');
+const { nodeId } = require('../../out/tree/workspaceProvider');
 
 function fakeMemento(initial = {}) {
   const store = { ...initial };
@@ -24,6 +25,7 @@ function fakeMemento(initial = {}) {
 }
 
 const FS_ID = 'fs:' + encodeURIComponent('file:///tmp/x/a.txt');
+const FS_PARENT_ID = 'fs:' + encodeURIComponent('file:///tmp/x');
 
 test('ExpansionState: init restores saved ids from memento', () => {
   const m = fakeMemento({ 'agentDock.expandedNodes.v1': ['server:__current__', 'folder:__current__:/tmp/x'] });
@@ -38,29 +40,101 @@ test('ExpansionState: onExpand persists, onCollapse removes', async () => {
   es.init(m);
   const node = { kind: 'folder', serverKey: '__current__', path: '/tmp/x', label: 'x' };
   es.onExpand(node);
+  await es.flush();
   assert.ok(es.ids.includes('folder:__current__:/tmp/x'));
   assert.deepEqual(m._store['agentDock.expandedNodes.v1'], ['folder:__current__:/tmp/x']);
   // 折叠删除并持久化
   es.onCollapse(node);
+  await es.flush();
   assert.equal(es.ids.length, 0);
   assert.deepEqual(m._store['agentDock.expandedNodes.v1'], []);
 });
 
 test('ExpansionState: restore reveals shallow nodes first (server → folder → fsEntry)', async () => {
-  const m = fakeMemento({
-    'agentDock.expandedNodes.v1': [FS_ID, 'folder:__current__:/tmp/x', 'server:__current__'],
-  });
+  // 让 /tmp 成为 workspace folder：/tmp/x 和 /tmp/x/a.txt 的祖先链才完整
+  const vscodeStub = require('./vscode-stub.js');
+  vscodeStub.workspace.workspaceFolders = [{ uri: vscodeStub.Uri.parse('file:///tmp'), name: 'tmp', index: 0 }];
+  try {
+    const m = fakeMemento({
+      'agentDock.expandedNodes.v1': [FS_ID, FS_PARENT_ID, 'folder:__current__:/tmp', 'server:__current__'],
+    });
+    const es = new ExpansionState();
+    es.init(m);
+    const order = [];
+    const view = {
+      reveal: async (node) => {
+        order.push(nodeId(node));
+      },
+    };
+    const hasPending = await es.restore([view]);
+    assert.equal(hasPending, false);
+    assert.deepEqual(
+      order,
+      ['server:__current__', 'folder:__current__:/tmp', FS_PARENT_ID, FS_ID],
+      'reveal must go shallow → deep and include the full ancestor chain',
+    );
+  } finally {
+    vscodeStub.workspace.workspaceFolders = undefined;
+  }
+});
+
+test('ExpansionState: collapsing a node also removes recorded descendants', async () => {
+  const m = fakeMemento();
   const es = new ExpansionState();
   es.init(m);
-  const order = [];
+  const parentNode = { kind: 'fsEntry', uri: { scheme: 'file', authority: '', path: '/tmp/x', fsPath: '/tmp/x', toString: () => 'file:///tmp/x' }, name: 'x', isDir: true };
+  const childNode = { kind: 'fsEntry', uri: { scheme: 'file', authority: '', path: '/tmp/x/a.txt', fsPath: '/tmp/x/a.txt', toString: () => 'file:///tmp/x/a.txt' }, name: 'a.txt', isDir: false };
+  es.onExpand(parentNode);
+  es.onExpand(childNode);
+  await es.flush();
+  assert.deepEqual(es.ids.sort(), [FS_ID, FS_PARENT_ID].sort());
+
+  es.onCollapse(parentNode);
+  await es.flush();
+  assert.equal(es.ids.length, 0, 'parent collapse must remove descendant records too');
+  assert.deepEqual(m._store['agentDock.expandedNodes.v1'], []);
+});
+
+test('ExpansionState: restore skips nodes whose parent is collapsed (no implicit re-expand)', async () => {
+  const m = fakeMemento({ 'agentDock.expandedNodes.v1': [FS_ID] });
+  const es = new ExpansionState();
+  es.init(m);
+  const revealed = [];
   const view = {
     reveal: async (node) => {
-      order.push(node.kind);
+      revealed.push(nodeId(node));
     },
   };
-  const hasPending = await es.restore([view]);
-  assert.equal(hasPending, false);
-  assert.deepEqual(order, ['server', 'folder', 'fsEntry'], 'reveal must go shallow → deep');
+  assert.equal(await es.restore([view]), false, 'orphan child must not trigger a reveal');
+  assert.deepEqual(revealed, [], 'parent path is absent → child stays hidden');
+  assert.deepEqual(es.ids, [FS_ID], 'saved record is kept for when the parent is expanded again');
+});
+
+test('ExpansionState: expanding the missing parent re-enables a filtered child', async () => {
+  const vscodeStub = require('./vscode-stub.js');
+  vscodeStub.workspace.workspaceFolders = [{ uri: vscodeStub.Uri.parse('file:///tmp'), name: 'tmp', index: 0 }];
+  try {
+    const m = fakeMemento({ 'agentDock.expandedNodes.v1': [FS_ID] });
+    const es = new ExpansionState();
+    es.init(m);
+    const revealed = [];
+    const view = { reveal: async (node) => revealed.push(nodeId(node)) };
+    assert.equal(await es.restore([view]), false, 'parent collapsed → child not revealed');
+
+    const folder = { kind: 'folder', serverKey: '__current__', path: '/tmp', label: 'tmp' };
+    const parent = { kind: 'fsEntry', uri: vscodeStub.Uri.parse('file:///tmp/x'), name: 'x', isDir: true };
+    es.onExpand(folder);
+    es.onExpand(parent);
+    es.onTreeChanged();
+    assert.equal(await es.restore([view]), false);
+    assert.deepEqual(
+      revealed,
+      ['folder:__current__:/tmp', FS_PARENT_ID, FS_ID],
+      'after parent re-expanded, the saved child is restored (with its ancestors)',
+    );
+  } finally {
+    vscodeStub.workspace.workspaceFolders = undefined;
+  }
 });
 
 test('ExpansionState: restore retries failed reveals on next round', async () => {

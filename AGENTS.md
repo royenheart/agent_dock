@@ -69,6 +69,7 @@
 - **VSCode 不自动持久化扩展 TreeView 的展开状态**（官方讨论 #1071）——必须由 `ExpansionState` 自行记录（onDidExpand/onDidCollapse）并在 reload/刷新后 `treeView.reveal(node, {expand:true})` 重放；删掉这套逻辑 = 展开状态回退
 - `nodeFromId` 的 case 前缀必须与 `nodeId` 的**输出前缀完全一致**（如 `fs:` / `remoteFs:`，不是 `fsEntry`/`remoteFsEntry`）——不一致则 reveal 恢复静默失败
 - **当前服务器的 server 节点 key 必须恒为 `CURRENT_SERVER_KEY`**（rootNodes 里即使有匹配配置也统一用它）——folder/otherSessions/portsRoot 的 serverKey 都是它，nodeParent 推导的父 server id 才能与树中实际节点一致；改回 `current.name` 会导致当前服务器目录展开状态无法恢复
+- **折叠父节点必须同步删除已记录的后代展开态，restore 只能 reveal 祖先链完整的节点**：若留下后代 id，reload 后 reveal 子节点会隐式把已折叠的父节点重新展开（并触发 onDidExpandElement 写回），表现就是“折叠 A 再 reload，A 又打开”；用户重新展开父节点时（onExpand）要重置重试预算并再排一轮，把被过滤的子节点恢复出来
 - 展开状态异常时看 `[tree]` 日志：`getParent <kind> id=... -> parent id=...`（debug）与 `reveal <id> failed`——核对 id 是否跨 reload 一致
 
 ## 远程 git 集成（只读展示，自绘 gutter）
