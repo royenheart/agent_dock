@@ -4,6 +4,7 @@ const vscode = require('vscode');
 const { buildTranscriptScript } = require('../../../out/agents/discoveryScript');
 const { renderTranscript } = require('../../../out/agents/transcript');
 const { execLocal } = require('../../../out/ssh/remoteExec');
+const { syncServersWithSshConfig } = require('../../../out/config');
 const { readSshConfigHosts } = require('../../../out/ssh/sshConfig');
 const { clientTerminalOptions } = require('../../../out/ssh/clientTerminal');
 
@@ -230,6 +231,25 @@ suite('agent-workspace e2e', () => {
     assert.equal(hosts[0].host, 'e2e-host');
     assert.equal(hosts[0].user, 'tester');
     assert.equal(hosts[0].port, 2222);
+  });
+
+  test('ssh config alias sync refreshes cached user/port in user settings', async () => {
+    const cfg = vscode.workspace.getConfiguration('agentDock');
+    await cfg.update(
+      'servers',
+      [{ name: 'sync-e2e', host: 'e2e-host', user: 'old-user', port: 40088, folders: [] }],
+      vscode.ConfigurationTarget.Global,
+    );
+    try {
+      await syncServersWithSshConfig(process.env.HOME);
+      await new Promise((r) => setTimeout(r, 200));
+      // 用新的 Configuration 对象读取：旧对象可能缓存 update 前的 get() 视图
+      const saved = vscode.workspace.getConfiguration('agentDock').get('servers', []);
+      assert.equal(saved[0].user, 'tester', 'user settings should mirror current ssh config user');
+      assert.equal(saved[0].port, 2222, 'user settings should mirror current ssh config port');
+    } finally {
+      await cfg.update('servers', [], vscode.ConfigurationTarget.Global);
+    }
   });
 
   /* ---- 右键菜单完整性（防回退：历史缺陷「只剩刷新文件」） ---- */

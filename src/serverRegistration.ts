@@ -1,4 +1,5 @@
 import type { PortForward, ServerConfig } from './model';
+import type { SshHostEntry } from './ssh/sshConfig';
 
 /** Loose match: authority host may carry user@ / :port decorations. */
 export function hostMatches(authorityHost: string, server: ServerConfig): boolean {
@@ -87,6 +88,28 @@ export function parseServerList(raw: unknown): ServerConfig[] {
     }
   }
   return out;
+}
+
+/**
+ * 用“当前” ~/.ssh/config 的 Host 别名条目刷新 servers 配置里的 user/port 快照。
+ * 只改 user/port，保留 name/host/folders/forwards；未命中别名的条目原样保留。
+ * 这样用户改 ssh config 的 Port 后 reload，用户设置 settings.json 也会同步成新端口。
+ */
+export function applySshConfigToServers(
+  servers: ServerConfig[],
+  hosts: SshHostEntry[],
+): { servers: ServerConfig[]; changed: boolean } {
+  const byHost = new Map(hosts.map((h) => [h.host.toLowerCase(), h]));
+  let changed = false;
+  const out = servers.map((server) => {
+    const entry = byHost.get(server.host.toLowerCase());
+    if (!entry || (entry.user === server.user && entry.port === server.port)) {
+      return server;
+    }
+    changed = true;
+    return { ...server, user: entry.user, port: entry.port };
+  });
+  return { servers: out, changed };
 }
 
 /** 合并远程列表进本地列表：按 name 去重，本地条目优先。 */

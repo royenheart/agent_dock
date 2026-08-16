@@ -1,6 +1,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const {
+  applySshConfigToServers,
   parseSshAuthority,
   parseServerList,
   mergeServersByName,
@@ -27,6 +28,27 @@ test('parseServerList: keeps valid entries, parses folders/forwards, drops junk'
   assert.deepEqual(servers[0].folders, ['/x']);
   assert.deepEqual(servers[0].forwards, [{ localPort: 8080, remotePort: 80, remoteHost: undefined }]);
   assert.deepEqual(parseServerList('nope'), []);
+});
+
+test('applySshConfigToServers: alias snapshots refresh cached user/port in settings', () => {
+  const servers = [
+    { name: 'A', host: 'same-alias', user: 'old-user', port: 40088, folders: ['/a'], forwards: [] },
+    { name: 'B', host: '10.0.0.9', user: 'root', port: 2200 },
+  ];
+  const hosts = [{ host: 'same-alias', hostName: 'server.internal', user: 'new-user', port: 40888 }];
+  const res = applySshConfigToServers(servers, hosts);
+  assert.equal(res.changed, true);
+  assert.deepEqual(res.servers[0], { name: 'A', host: 'same-alias', user: 'new-user', port: 40888, folders: ['/a'], forwards: [] });
+  assert.deepEqual(res.servers[1], servers[1], 'non-alias entries are untouched');
+});
+
+test('applySshConfigToServers: alias without user/port clears stale cached values', () => {
+  const servers = [{ name: 'A', host: 'alias', user: 'old', port: 40088, folders: [] }];
+  const hosts = [{ host: 'alias', hostName: 'server.internal' }];
+  const res = applySshConfigToServers(servers, hosts);
+  assert.equal(res.changed, true);
+  assert.equal(res.servers[0].user, undefined);
+  assert.equal(res.servers[0].port, undefined);
 });
 
 test('mergeServersByName: union, local wins on name clash', () => {

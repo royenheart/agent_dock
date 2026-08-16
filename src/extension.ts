@@ -9,7 +9,7 @@ import { maybeRunDemo } from './demo';
 import { SettingsViewProvider } from './views/settingsView';
 import { SessionPanel } from './views/sessionPanel';
 import { registerCommands } from './commands';
-import { ensureCurrentServerRegistered } from './config';
+import { ensureCurrentServerRegistered, syncServersWithSshConfig } from './config';
 import { setExtensionKind } from './ssh/currentExec';
 import { clientTerminalOptions, flushClientTerminalPersistence, initClientTerminalPersistence, isAgentDockTerminal, isTrackedTerminal, markClientTerminalsShuttingDown, openClientTerminal, syncTrackedTerminalName, trackClientTerminal, untrackClientTerminal } from './ssh/clientTerminal';
 import { initNativeTerminalPersistence, markNativeTerminalsShuttingDown, reconcileNativeTerminal, syncNativeTerminalName, untrackNativeTerminal } from './ssh/nativeTerminal';
@@ -159,6 +159,8 @@ export function activate(context: vscode.ExtensionContext): AgentDockApi {
   const autoSave = new AutoSaveManager();
   context.subscriptions.push(autoSave);
   void ensureCurrentServerRegistered();
+  // 把当前 ssh config 的 user/port 同步回用户设置 settings.json（与连接层实时解析同一队列）
+  void syncServersWithSshConfig();
   initClientTerminalPersistence(context.workspaceState);
   // fsOpenTerminal 的原生终端由 VSCode 自己恢复，这里只补记跟踪并回放被重置的名字
   initNativeTerminalPersistence(context.workspaceState);

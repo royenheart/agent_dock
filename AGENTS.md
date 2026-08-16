@@ -34,7 +34,7 @@
 - execRemote/execRemoteBuffer 持久路径失败会自动降级 spawn（可用性兜底），但这是异常路径不是常态
 - 连接失败有指数退避（1s→30s），防止轮询对不可达服务器反复发起 10s 超时连接
 - 会话池（sessionFor）在 extension.ts deactivate 时 `disposeSshSessions()` 释放
-- **servers[].host 命中 ~/.ssh/config 的 Host 别名时，HostName/User/Port/IdentityFile 每次连接实时解析，settings 里缓存的 user/port 不得覆盖**（`resolveServerConnection`/`resolveSshCliTarget`）；`ensureServerSaved` 也不再把 ssh config 解析出的 user/port 写进 settings。改回 `server.port ?? resolved.port` 或恢复拷贝 = 用户改 ssh config 端口后连接继续用旧端口，属回退
+- **servers[].host 命中 ~/.ssh/config 的 Host 别名时，HostName/User/Port/IdentityFile 每次连接实时解析，settings 里缓存的 user/port 不得覆盖**（`resolveServerConnection`/`resolveSshCliTarget`）；`ensureServerSaved` 也不再把 ssh config 解析出的 user/port 写进 settings；activate 时还要用 `syncServersWithSshConfig()` 把当前 ssh config 的 user/port 同步回用户设置 settings.json（用户改 Port 后 reload，settings 也要跟着更新）。改回 `server.port ?? resolved.port`、去掉 settings 同步或恢复拷贝 = 端口设置过旧，属回退
 
 ## 远程文件可写（remoteFsProvider.ts + extension.ts 必须同步）
 

@@ -1,10 +1,11 @@
 import * as os from 'node:os';
 import * as vscode from 'vscode';
 import type { PortForward, ServerConfig } from './model';
-import { findCurrentServer, hostMatches, mergeServersByName, parseServerList, planRegistration } from './serverRegistration';
+import { applySshConfigToServers, findCurrentServer, hostMatches, mergeServersByName, parseServerList, planRegistration } from './serverRegistration';
 import { createSerialQueue } from './batch';
 import { normPath } from './paths';
 import { log } from './log';
+import { readSshConfigHosts } from './ssh/sshConfig';
 
 export { findCurrentServer, hostMatches };
 
@@ -87,6 +88,33 @@ export function ensureCurrentServerRegistered(): Promise<void> {
     }
   }).catch((err) => {
     log.child('config').warn(`register current failed: ${String(err)}`);
+  });
+}
+
+/**
+ * 用当前 ~/.ssh/config 刷新 servers 里缓存的 user/port 快照。
+ * 连接层已实时解析 ssh config，这里的同步是为了让用户设置 settings.json 也保持一致：
+ * 用户改 Host 别名的新端口后 reload，settings 里的旧端口会被更新（或清掉）。
+ */
+export function syncServersWithSshConfig(homeDir?: string): Promise<void> {
+  return configQueue(async () => {
+    await migrateRemoteServersToLocal();
+    const hosts = await readSshConfigHosts(homeDir);
+    const { servers, changed } = applySshConfigToServers(getServers(), hosts);
+    if (!changed) {
+      log.child('config').debug(`ssh config sync: servers already match (${servers.length} entries)`);
+      return;
+    }
+    await vscode.workspace
+      .getConfiguration(SECTION)
+      .update('servers', servers, vscode.ConfigurationTarget.Global);
+    const updated = servers
+      .filter((s) => hosts.some((h) => h.host.toLowerCase() === s.host.toLowerCase()))
+      .map((s) => `${s.name}:${s.host}${s.port ? `:${s.port}` : ''}`)
+      .join(', ');
+    log.child('config').info(`synced servers user/port from current ssh config: ${updated}`);
+  }).catch((err) => {
+    log.child('config').warn(`sync servers with ssh config failed: ${String(err)}`);
   });
 }
 
