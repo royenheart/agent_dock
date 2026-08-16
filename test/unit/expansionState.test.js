@@ -110,7 +110,7 @@ test('ExpansionState: restore skips nodes whose parent is collapsed (no implicit
   assert.deepEqual(es.ids, [FS_ID], 'saved record is kept for when the parent is expanded again');
 });
 
-test('ExpansionState: expanding the missing parent re-enables a filtered child', async () => {
+test('ExpansionState: reopening a parent alone does not re-reveal filtered children', async () => {
   const vscodeStub = require('./vscode-stub.js');
   vscodeStub.workspace.workspaceFolders = [{ uri: vscodeStub.Uri.parse('file:///tmp'), name: 'tmp', index: 0 }];
   try {
@@ -125,13 +125,9 @@ test('ExpansionState: expanding the missing parent re-enables a filtered child',
     const parent = { kind: 'fsEntry', uri: vscodeStub.Uri.parse('file:///tmp/x'), name: 'x', isDir: true };
     es.onExpand(folder);
     es.onExpand(parent);
-    es.onTreeChanged();
-    assert.equal(await es.restore([view]), false);
-    assert.deepEqual(
-      revealed,
-      ['folder:__current__:/tmp', FS_PARENT_ID, FS_ID],
-      'after parent re-expanded, the saved child is restored (with its ancestors)',
-    );
+    // onExpand 只记录父节点自身；扩展层不再在 onExpand 里 scheduleRestore，
+    // 因此重新打开父目录不会把之前保存过的子目录批量展开。
+    assert.deepEqual(revealed, [], 'onExpand must not trigger any reveal by itself');
   } finally {
     vscodeStub.workspace.workspaceFolders = undefined;
   }

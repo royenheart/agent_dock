@@ -80,12 +80,9 @@ export function activate(context: vscode.ExtensionContext): AgentDockApi {
   const expansionState = new ExpansionState();
   expansionState.init(context.workspaceState);
   expansionStateForShutdown = expansionState;
-  const onExpand = (e: vscode.TreeViewExpansionEvent<Node>): void => {
-    expansionState.onExpand(e.element);
-    // 新展开的父节点可能带有已保存但此前被“祖先未展开”过滤掉的子节点：重排一轮恢复它们
-    expansionState.onTreeChanged();
-    scheduleRestore(300);
-  };
+  // 用户重新打开父节点时只记录父节点自身，不批量重放其保存过的后代——
+  // 父级折叠是层级覆盖：重新打开后子目录默认保持折叠。
+  const onExpand = (e: vscode.TreeViewExpansionEvent<Node>): void => expansionState.onExpand(e.element);
   // 树刷新（含全量重绘）后界面展开被清空，需按持久化集合重放。
   // 懒加载树首次渲染/扫描可能耗时数秒，reveal 需等父链就绪：restore 返回还有 pending
   // 时（上轮有节点因未就绪失败）自动再排一轮，防抖 1.5s 等扫描/加载完成。
