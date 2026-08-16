@@ -11,6 +11,7 @@ Module._resolveFilename = function (request, ...args) {
   return origResolve.call(this, request, ...args);
 };
 const { WorkspaceProvider } = require('../../out/tree/workspaceProvider');
+const { remoteGitStore } = require('../../out/git/remoteGit');
 
 // TS 的 private 在编译产物里是普通属性：直接种缓存验证刷新语义。
 // 回归背景：配置变更（如「给服务器添加目录」→ agentDock.servers 写入 → onDidChangeConfiguration）
@@ -31,4 +32,19 @@ test('refreshConfig preserves caches while refresh() clears them', () => {
   assert.equal(p.store.cache.has('srv1'), false, 'refresh() clears the session cache');
   assert.equal(p.remoteDirCache.size, 0, 'refresh() clears the remote dir cache');
   assert.equal(p.dirMtimes.size, 0, 'refresh() clears dir mtimes');
+});
+
+test('refreshRemoteDir invalidates the directory git status before refetching', async () => {
+  const p = new WorkspaceProvider();
+  const calls = [];
+  const orig = remoteGitStore.invalidate;
+  remoteGitStore.invalidate = (serverKey, dir) => {
+    calls.push([serverKey, dir]);
+  };
+  try {
+    await p.refreshRemoteDir('srv1', '/data');
+  } finally {
+    remoteGitStore.invalidate = orig;
+  }
+  assert.deepEqual(calls, [['srv1', '/data']], 'manual refresh must invalidate cached git decorations');
 });

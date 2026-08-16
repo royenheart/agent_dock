@@ -881,6 +881,9 @@ export class WorkspaceProvider implements vscode.TreeDataProvider<Node> {
     const cacheKey = `${serverKey}:${path}`;
     this.remoteDirCache.delete(cacheKey);
     this.dirMtimes.delete(cacheKey);
+    // 手动刷新目录意味着目录内容可能已变化：其所属仓库的 git 状态必须失效并安排重扫，
+    // 否则 remoteGitStore.request 命中缓存/冷却后不会重新扫描，树上的 git 徽标保持旧值。
+    remoteGitStore.invalidate(serverKey, path);
     await this.fetchRemoteDir(serverKey, path);
     this.onDidChangeEmitter.fire(undefined);
   }
