@@ -3,7 +3,7 @@
   "displayName": "Agent Dock",
   "icon": "media/logo.png",
   "description": "Agent Dock — cross-server AI agent workspace: files of the current server plus opencode / Codex CLI / Claude Code sessions across SSH servers.",
-  "version": "0.2.7",
+  "version": "0.2.8",
   "publisher": "royenheart",
   "license": "MIT",
   "engines": {

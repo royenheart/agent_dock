@@ -1,3 +1,18 @@
+## v0.2.8 (2026-08-16)
+
+### Feat
+
+- **forward**: keep port forwards alive for the window lifetime
+
+### Fix
+
+- **git**: invalidate git status on manual remote dir refresh
+- **config**: sync ssh config user/port into user settings
+- **tree**: treat collapsed parent as hierarchical override
+- **terminal**: persist renamed client terminal names
+- **tree**: persist collapsed state and restore by ancestor chain
+- **ssh**: resolve ssh config options live instead of stale settings
+
 ## v0.2.7 (2026-08-15)
 
 ### Fix
