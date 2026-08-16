@@ -82,8 +82,9 @@
 - untracked/added/deleted/ignored 不打 gutter（与原生 git 语义一致）；编辑后标记要等保存→轮询→重扫刷新，不做逐键 diff（每键一次 ssh 不可接受）
 - 树/资源管理器的字母徽标装饰走 gitDecorations.ts，与 gutter 并存
 
-## 端口转发（src/ssh/portForward.ts）- Windows（Win32-OpenSSH）不支持 ControlMaster，`-O forward`/`-O cancel` 必然失败——win32 直接走独立 `ssh -N` 进程，不要尝试 `-O`，否则每次启动都打失败日志
-- 活跃转发必须持久化到 workspaceState（`persistActiveForwards` 在 start/stop/进程退出时调用），reload 后由 `restoreActiveForwards` 自动重启——否则转发随窗口关闭
+## 端口转发（src/ssh/portForward.ts）
+- 端口转发统一为“每转发一个受监控的 `ssh -N -L` 独立进程”：`ServerAliveInterval/CountMax` 保活，进程意外退出后按 1s→30s 指数退避自动重启，用户 stop 前不删除 active 条目——生命周期与 VSCode 窗口一致。不要再回到 `-O forward`/ControlPersist 模式（8h 后悄悄断掉，且 Windows 不支持）
+- 活跃转发必须持久化到 workspaceState（`persistActiveForwards` 在 start/stop 时调用），reload 后由 `restoreActiveForwards` 自动重启且失败会退避重试；deactivate 时 `markForwardsShuttingDown()` 杀进程/清定时器但保留 workspaceState 列表——否则转发随窗口关闭或 reload 后丢失
 
 ## 右键菜单（package.json + getTreeItem 必须同步）
 

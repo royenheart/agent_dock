@@ -13,7 +13,7 @@ import { ensureCurrentServerRegistered, syncServersWithSshConfig } from './confi
 import { setExtensionKind } from './ssh/currentExec';
 import { clientTerminalOptions, flushClientTerminalPersistence, initClientTerminalPersistence, isAgentDockTerminal, isTrackedTerminal, markClientTerminalsShuttingDown, openClientTerminal, syncTrackedTerminalName, trackClientTerminal, untrackClientTerminal } from './ssh/clientTerminal';
 import { initNativeTerminalPersistence, markNativeTerminalsShuttingDown, reconcileNativeTerminal, syncNativeTerminalName, untrackNativeTerminal } from './ssh/nativeTerminal';
-import { initForwardStore, restoreActiveForwards } from './ssh/portForward';
+import { initForwardStore, markForwardsShuttingDown, restoreActiveForwards } from './ssh/portForward';
 import { AutoSaveManager } from './autoSave';
 import { RemoteGitDecorationProvider } from './git/gitDecorations';
 import { GitDirtyDiffCodeLensProvider, GitDirtyDiffDecorator } from './git/gitDirtyDiff';
@@ -213,6 +213,7 @@ export function deactivate(): Promise<void> {
   // reload 的销毁序列会向扩展派发终端 close/树展开折叠等事件；标记后持久化逻辑不再删记录/落盘
   markClientTerminalsShuttingDown();
   markNativeTerminalsShuttingDown();
+  markForwardsShuttingDown();
   expansionStateForShutdown?.markShuttingDown();
   // 关闭所有持久 SSH 会话（SFTP/exec 通道所在的长连接）
   const sessions = disposeSshSessions();

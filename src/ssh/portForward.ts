@@ -2,7 +2,7 @@ import { spawn, type ChildProcess } from 'node:child_process';
 import * as vscode from 'vscode';
 import type { PortForward, ServerConfig } from '../model';
 import { getServers } from '../config';
-import { execRemote, resolveSshCliTarget, runSsh, sshCliPortArgs } from './remoteExec';
+import { execRemote, resolveSshCliTarget, sshCliPortArgs } from './remoteExec';
 import { parseListeners, type ListeningService } from './listeners';
 import { log, tail } from '../log';
 
@@ -12,6 +12,12 @@ export { parseListeners, type ListeningService };
 
 export function forwardSpec(f: PortForward): string {
   return `${f.localPort}:${f.remoteHost ?? 'localhost'}:${f.remotePort}`;
+}
+
+/** 意外断线后的重试退避：1s → 2s → 4s → 8s → 16s → 30s（封顶）。 */
+export function forwardRetryDelayMs(attempt: number): number {
+  const exp = Math.min(Math.max(0, Math.floor(attempt)), 5);
+  return Math.min(1000 * 2 ** exp, 30_000);
 }
 
 const SERVICE_TTL_MS = 30_000;
@@ -31,35 +37,44 @@ export async function detectListeningServices(server: ServerConfig): Promise<Map
 }
 
 interface ActiveForward {
-  mode: 'master' | 'process';
   child?: ChildProcess;
+  server: ServerConfig;
+  forward: PortForward;
+  key: string;
+  /** 连续失败次数（决定退避间隔；成功启动后归零）。 */
+  attempt: number;
+  restartTimer?: NodeJS.Timeout;
+  stopping?: boolean;
+  starting?: boolean;
 }
 
-// 活跃转发只存在于内存：master 模式随主连接（ControlPersist）存活，process 模式随窗口存活。
-// 同时把「启动中的转发」写入 workspaceState，窗口 reload 后自动重启（见 restoreActiveForwards）。
+// 与原生端口转发保持同样语义：只要窗口还活着、用户没有手动停掉，转发就应持续存在。
+// 这里统一用“每转发一个受监控的 ssh -N 独立进程”，进程意外退出后按指数退避自动重启；
+// 用户停止前不从 active 删除，因此树上的状态不会因为网络抖动而反复回落到 inactive。
 const active = new Map<string, ActiveForward>();
 const keyOf = (serverName: string, f: PortForward): string => `${serverName}|${forwardSpec(f)}`;
 
 const FORWARD_STORE_KEY = 'agentDock.activeForwards.v1';
 let forwardStore: vscode.Memento | undefined;
 
+/** reload 后自动重启上一窗口仍在运行的转发；启动失败的条目退避重试。 */
+const pendingRestores = new Map<string, { server: ServerConfig; forward: PortForward; attempt: number; timer?: NodeJS.Timeout }>();
+let shuttingDown = false;
+
 export function initForwardStore(memento: vscode.Memento): void {
   forwardStore = memento;
 }
 
 function persistActiveForwards(): void {
-  if (!forwardStore) {
+  if (!forwardStore || shuttingDown) {
     return;
   }
   const list: { serverName: string; forward: PortForward }[] = [];
-  for (const [k] of active) {
-    const sep = k.indexOf('|');
-    const serverName = k.slice(0, sep);
-    const spec = k.slice(sep + 1);
-    const server = getServers().find((s) => s.name === serverName);
-    const forward = server?.forwards?.find((f) => forwardSpec(f) === spec);
+  for (const entry of active.values()) {
+    const server = getServers().find((s) => s.name === entry.server.name);
+    const forward = server?.forwards?.find((f) => forwardSpec(f) === forwardSpec(entry.forward));
     if (forward) {
-      list.push({ serverName, forward });
+      list.push({ serverName: entry.server.name, forward });
     }
   }
   forwardStore.update(FORWARD_STORE_KEY, list).then(
@@ -68,7 +83,40 @@ function persistActiveForwards(): void {
   );
 }
 
-/** 窗口 reload 后自动重启上次仍在运行的端口转发。 */
+function clearPendingRestore(k: string): void {
+  const pending = pendingRestores.get(k);
+  if (pending?.timer) {
+    clearTimeout(pending.timer);
+  }
+  pendingRestores.delete(k);
+}
+
+function scheduleRestoreRetry(server: ServerConfig, forward: PortForward): void {
+  const k = keyOf(server.name, forward);
+  if (shuttingDown || active.has(k) || pendingRestores.has(k)) {
+    return;
+  }
+  const pending = { server, forward, attempt: 0, timer: undefined as NodeJS.Timeout | undefined };
+  pendingRestores.set(k, pending);
+  armRestoreRetry(pending);
+}
+
+function armRestoreRetry(pending: { server: ServerConfig; forward: PortForward; attempt: number; timer?: NodeJS.Timeout }): void {
+  if (shuttingDown) {
+    return;
+  }
+  const delay = forwardRetryDelayMs(pending.attempt);
+  pending.attempt += 1;
+  pending.timer = setTimeout(() => {
+    pending.timer = undefined;
+    startForward(pending.server, pending.forward)
+      .then(() => clearPendingRestore(keyOf(pending.server.name, pending.forward)))
+      .catch(() => armRestoreRetry(pending));
+  }, delay);
+  pending.timer.unref?.();
+}
+
+/** 窗口 reload 后自动重启上次仍在运行的端口转发；失败会退避重试直到窗口关闭。 */
 export async function restoreActiveForwards(): Promise<void> {
   if (!forwardStore) {
     return;
@@ -79,11 +127,10 @@ export async function restoreActiveForwards(): Promise<void> {
     if (!server) {
       continue;
     }
-    try {
-      await startForward(server, forward);
-    } catch (err) {
+    void startForward(server, forward).catch((err) => {
       flog.warn(`restore forward ${serverName} ${forwardSpec(forward)} failed: ${String(err)}`);
-    }
+      scheduleRestoreRetry(server, forward);
+    });
   }
 }
 
@@ -99,82 +146,184 @@ export function setOnDidChange(cb: (serverName: string) => void): void {
 
 export async function startForward(server: ServerConfig, f: PortForward): Promise<void> {
   const k = keyOf(server.name, f);
+  clearPendingRestore(k);
   if (active.has(k)) {
     return;
   }
-  const spec = forwardSpec(f);
   const probe = await execRemote(server, 'true', 10_000);
   if (probe.code !== 0) {
     flog.warn(`probe failed on ${server.name}`, { code: probe.code, stderr: tail(probe.stderr) });
     throw new Error(`ssh to ${server.name} failed: ${probe.stderr.trim().slice(0, 200) || `exit ${probe.code}`}`);
   }
-  // host 命中 ssh config 别名时以当前配置为准，不用 servers 里旧缓存的端口
-  const cli = await resolveSshCliTarget(server);
-  // 优先 -O forward：复用主连接下发转发，不新建进程，随 ControlPersist 存活。
-  // Windows 的 Win32-OpenSSH 不支持 ControlMaster（buildSshBaseArgs 已去掉 ControlPath），
-  // -O 必然报 "No ControlPath specified"，直接跳过，避免每次启动转发都打一条失败日志。
-  if (process.platform !== 'win32') {
-    const res = await runSsh(server, ['-O', 'forward', '-L', spec, cli.destination]);
-    if (res.code === 0) {
-      active.set(k, { mode: 'master' });
-      persistActiveForwards();
-      flog.info(`up ${server.name} ${spec} (via ControlMaster)`);
-      onDidChange?.(server.name);
-      return;
-    }
-    flog.debug(`-O forward unavailable on ${server.name}, falling back to dedicated process`, { code: res.code, stderr: tail(res.stderr) });
+  const entry: ActiveForward = { server, forward: f, key: k, attempt: 0 };
+  active.set(k, entry);
+  try {
+    await spawnForwardProcess(entry);
+  } catch (err) {
+    active.delete(k);
+    throw err;
   }
-  // 回退：独立 ssh -N 进程（如连接复用被禁用、Windows、或 OpenSSH < 6.7）
-  const args = ['-o', 'BatchMode=yes', '-o', 'ConnectTimeout=8', '-N', '-T', '-o', 'ExitOnForwardFailure=yes', '-L', spec];
-  args.push(...sshCliPortArgs(cli), cli.destination);
-  flog.debug(`spawning dedicated forward process`, { argv: `ssh ${args.join(' ')}` });
+  entry.attempt = 0;
+  persistActiveForwards();
+  flog.info(`up ${server.name} ${forwardSpec(f)} (monitored process)`);
+  onDidChange?.(server.name);
+}
+
+/** 启动/重启一个 ssh -N -L 进程；启动窗口内失败会抛错，之后退出交给 exit handler 自动重启。 */
+async function spawnForwardProcess(entry: ActiveForward): Promise<void> {
+  if (shuttingDown || entry.stopping) {
+    return;
+  }
+  const server = getServers().find((s) => s.name === entry.server.name) ?? entry.server;
+  const cli = await resolveSshCliTarget(server);
+  const spec = forwardSpec(entry.forward);
+  const args = [
+    '-o', 'BatchMode=yes',
+    '-o', 'ConnectTimeout=8',
+    '-N',
+    '-T',
+    '-o', 'ExitOnForwardFailure=yes',
+    '-o', 'ServerAliveInterval=15',
+    '-o', 'ServerAliveCountMax=3',
+    '-L', spec,
+    ...sshCliPortArgs(cli),
+    cli.destination,
+  ];
+  flog.debug(`spawning monitored forward process`, { argv: `ssh ${args.join(' ')}` });
   const child = spawn('ssh', args, { stdio: ['ignore', 'ignore', 'pipe'] });
+  entry.child = child;
+  entry.starting = true;
   let stderr = '';
   child.stderr.on('data', (d: Buffer) => {
     stderr += d.toString('utf8');
   });
   await new Promise<void>((resolve, reject) => {
-    const timer = setTimeout(resolve, 1500);
-    child.once('exit', (code) => {
-      clearTimeout(timer);
-      reject(new Error(stderr.trim().slice(0, 200) || `ssh exited ${code ?? -1}`));
-    });
+    const timer = setTimeout(() => {
+      if (entry.starting) {
+        entry.starting = false;
+        resolve();
+      }
+    }, 2500);
     child.once('error', (err) => {
-      clearTimeout(timer);
-      reject(err);
+      if (entry.starting) {
+        entry.starting = false;
+        entry.child = undefined;
+        clearTimeout(timer);
+        reject(err);
+      }
+    });
+    child.once('exit', (code) => {
+      if (entry.starting) {
+        entry.starting = false;
+        entry.child = undefined;
+        clearTimeout(timer);
+        reject(new Error(stderr.trim().slice(0, 200) || `ssh exited ${code ?? -1}`));
+      }
     });
   });
+  entry.starting = false;
+  if (shuttingDown || entry.stopping || active.get(entry.key) !== entry) {
+    child.kill('SIGTERM');
+    return;
+  }
+  if (child.exitCode !== null) {
+    entry.child = undefined;
+    handleUnexpectedExit(entry, child.exitCode);
+    return;
+  }
   child.on('exit', (code) => {
-    if (active.get(k)?.child === child) {
-      active.delete(k);
-      persistActiveForwards();
-      flog.warn(`down ${server.name} ${spec} (process exited ${code ?? -1})`);
-      onDidChange?.(server.name);
+    if (entry.child === child) {
+      entry.child = undefined;
+      handleUnexpectedExit(entry, code ?? -1);
     }
   });
-  active.set(k, { mode: 'process', child });
-  persistActiveForwards();
-  flog.info(`up ${server.name} ${spec} (dedicated process)`);
-  onDidChange?.(server.name);
+  child.on('error', (err) => {
+    if (entry.child === child) {
+      entry.child = undefined;
+      flog.warn(`forward process error on ${entry.server.name}: ${String(err)}`);
+    }
+  });
+}
+
+function handleUnexpectedExit(entry: ActiveForward, code: number): void {
+  if (shuttingDown || entry.stopping || active.get(entry.key) !== entry) {
+    return;
+  }
+  flog.warn(`down ${entry.server.name} ${forwardSpec(entry.forward)} (process exited ${code}), restarting`);
+  onDidChange?.(entry.server.name);
+  scheduleRestart(entry);
+}
+
+function scheduleRestart(entry: ActiveForward): void {
+  if (shuttingDown || entry.stopping || entry.restartTimer || active.get(entry.key) !== entry) {
+    return;
+  }
+  const delay = forwardRetryDelayMs(entry.attempt);
+  entry.attempt += 1;
+  entry.restartTimer = setTimeout(() => {
+    entry.restartTimer = undefined;
+    void restartEntry(entry);
+  }, delay);
+  entry.restartTimer.unref?.();
+}
+
+async function restartEntry(entry: ActiveForward): Promise<void> {
+  if (shuttingDown || entry.stopping || active.get(entry.key) !== entry) {
+    return;
+  }
+  const server = getServers().find((s) => s.name === entry.server.name);
+  if (!server) {
+    active.delete(entry.key);
+    persistActiveForwards();
+    onDidChange?.(entry.server.name);
+    return;
+  }
+  try {
+    await spawnForwardProcess(entry);
+    entry.attempt = 0;
+    flog.info(`up ${entry.server.name} ${forwardSpec(entry.forward)} (restarted)`);
+    onDidChange?.(entry.server.name);
+  } catch (err) {
+    flog.warn(`restart forward ${entry.server.name} ${forwardSpec(entry.forward)} failed: ${String(err)}`);
+    scheduleRestart(entry);
+  }
 }
 
 export async function stopForward(server: ServerConfig, f: PortForward): Promise<void> {
   const k = keyOf(server.name, f);
-  const cur = active.get(k);
-  if (!cur) {
+  const entry = active.get(k);
+  if (!entry) {
     return;
   }
-  if (cur.mode === 'process') {
-    cur.child?.kill('SIGTERM');
-  } else {
-    const cli = await resolveSshCliTarget(server);
-    const res = await runSsh(server, ['-O', 'cancel', '-L', forwardSpec(f), cli.destination]);
-    if (res.code !== 0) {
-      flog.warn(`-O cancel failed on ${server.name}`, { code: res.code, stderr: tail(res.stderr) });
-    }
+  entry.stopping = true;
+  if (entry.restartTimer) {
+    clearTimeout(entry.restartTimer);
+    entry.restartTimer = undefined;
   }
+  entry.child?.kill('SIGTERM');
+  entry.child = undefined;
   active.delete(k);
   persistActiveForwards();
   flog.info(`down ${server.name} ${forwardSpec(f)}`);
   onDidChange?.(server.name);
+}
+
+/** 窗口 reload 的销毁序列：杀进程/清定时器，但保留 workspaceState 里的 active 列表供下一窗口重启。 */
+export function markForwardsShuttingDown(): void {
+  shuttingDown = true;
+  for (const entry of active.values()) {
+    entry.stopping = true;
+    if (entry.restartTimer) {
+      clearTimeout(entry.restartTimer);
+      entry.restartTimer = undefined;
+    }
+    entry.child?.kill('SIGTERM');
+    entry.child = undefined;
+  }
+  for (const pending of pendingRestores.values()) {
+    if (pending.timer) {
+      clearTimeout(pending.timer);
+    }
+  }
+  pendingRestores.clear();
 }
