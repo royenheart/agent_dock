@@ -55,6 +55,15 @@
         "contents": "%welcome.content%"
       }
     ],
+    "resourceLabelFormatters": [
+      {
+        "scheme": "agentdock-remote",
+        "formatting": {
+          "label": "${authority}:${query.label}",
+          "separator": "/"
+        }
+      }
+    ],
     "terminal": {
       "profiles": [
         {

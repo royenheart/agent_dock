@@ -15,11 +15,44 @@ import {
   type PollSnapshot,
 } from './remoteFsPoll';
 import { log } from '../log';
+import { isUnder, normPath, pathBasename } from '../paths';
 
 export const REMOTE_SCHEME = 'agentdock-remote';
 
+/**
+ * 计算 agentdock-remote 资源的显示标签：优先取「服务器上配置的 workspace 目录名 + 目录内相对路径」，
+ * 路径不落在任何已配置目录时退回完整路径（去掉开头 /）。
+ * 结果放进 query.label，由 package.json 的 resourceLabelFormatters 渲染。
+ */
+function remoteLabel(serverKey: string, path: string): string {
+  const folders = getServers()
+    .find((s) => s.name === serverKey)
+    ?.folders?.slice()
+    .sort((a, b) => b.length - a.length) ?? [];
+  for (const folder of folders) {
+    if (!isUnder(path, folder)) {
+      continue;
+    }
+    const root = normPath(folder);
+    if (root === '/') {
+      return path.replace(/^\/+/, '') || path;
+    }
+    const rel = path.slice(root.length).replace(/^\/+/, '');
+    const base = pathBasename(root);
+    return rel ? `${base}/${rel}` : base;
+  }
+  return path.replace(/^\/+/, '') || path;
+}
+
 export function remoteUri(serverKey: string, path: string): vscode.Uri {
-  return vscode.Uri.from({ scheme: REMOTE_SCHEME, authority: serverKey, path });
+  // query.label 供 resourceLabelFormatters 使用：编辑器标签页显示
+  // “server:workspace/relative/path”（见 package.json contributes）。
+  return vscode.Uri.from({
+    scheme: REMOTE_SCHEME,
+    authority: serverKey,
+    path,
+    query: JSON.stringify({ label: remoteLabel(serverKey, path) }),
+  });
 }
 
 function serverFor(authority: string): ServerConfig | undefined {
