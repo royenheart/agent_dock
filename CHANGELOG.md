@@ -1,3 +1,9 @@
+## v0.2.9 (2026-08-20)
+
+### Refactor
+
+- change file display name without full path
+
 ## v0.2.8 (2026-08-16)
 
 ### Feat
